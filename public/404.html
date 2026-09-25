@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>P2P 快传 · 房间跳转</title>
+  </head>
+  <body>
+    <!--
+      GitHub Pages 不支持服务器端路径重写：任何未知路径都会返回 404.html。
+      这里把路径（房间 ID）暂存到 sessionStorage，再跳回入口 index.html，
+      由入口页面的客户端脚本恢复房间 ID（见 src/components/transfer-app.tsx）。
+      注：房间 ID 为单路径段（无斜杠），因此相对路径 '../index.html' 总是可用的。
+    -->
+    <script>
+      (function () {
+        var room = location.pathname.split('/').filter(Boolean).pop() || ''
+        try {
+          sessionStorage.setItem('gh-pages-redirect', room)
+        } catch (e) {
+          /* ignore */
+        }
+        location.replace('../index.html')
+      })()
+    </script>
+    <noscript><p>请启用 JavaScript 以使用本应用。</p></noscript>
+  </body>
+</html>

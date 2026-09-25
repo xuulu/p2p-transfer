@@ -1,0 +1,27 @@
+{
+  "name": "p2p-transfer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "无服务器 P2P 跨设备文件与剪贴板传输平台（Next.js 16 + trystero + WebRTC Mesh，纯静态导出）",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "preview": "serve out",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@trystero-p2p/torrent": "^0.25.4",
+    "next": "^16.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "serve": "^14.0.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+/* 细滚动条，适配深色主题 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #334155 transparent;
+}

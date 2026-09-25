@@ -1,10 +1,10 @@
-# P2P 快传 — 无服务器跨设备文件与剪贴板传输平台
+# P2P 快传 — 无服务器跨设备文件与文本传输平台
 
 基于 **Next.js 16 (App Router) + TypeScript + Tailwind CSS** 的纯静态 P2P 应用。
 
 - **零服务器**：信令通过公共 BitTorrent Tracker 交换，之后设备间建立 WebRTC **Mesh** 直连，文件与文本不经过任何服务器
 - **纯静态导出**：`output: 'export'`，部署到任意静态托管；所有路径重写到 `index.html`，客户端从 `window.location.pathname` 解析房间 ID
-- **功能**：在线设备列表 · 拖拽发送文件 · 传输进度/速度 · 剪贴板文本同步（读取/写入/防循环）· 大文件 64KB 分块 + 逐块背压 · OPFS 流式保存
+- **功能**：在线设备列表 · 拖拽发送文件 · 传输进度/速度 · 文本传输（发送栏输入，列表留痕可复制）· 自定义信令列表 · 大文件 64KB 分块 + 逐块背压 · OPFS 流式保存
 
 ## 功能特性
 
@@ -14,8 +14,9 @@
 | 设备发现 | `@trystero-p2p/torrent`（trystero 的 BitTorrent 传输）通过公共 WebSocket BitTorrent Tracker 组播信令；连接建立后为 WebRTC Mesh |
 | 在线设备 | `room.onPeerJoin / onPeerLeave` 维护设备表，`hello` action 交换设备名；发送页多选目标设备 |
 | 文件传输 | 应用层按 **64KB** 分块，`file-chunk` action 逐块发送并 **`await` 每块的发送 Promise**（背压），对端按写链串行落盘 |
+| 文本传输 | 「发送」页输入文本发送给选中设备，收发双方都在传输列表留下记录，可一键复制（无自动剪贴板同步） |
+| 信令配置 | 「设置」页可自定义 Tracker 列表（一行一个，localStorage 持久化，保存后自动重连）；未配置时用构建期默认节点 |
 | 传输进度 | 发送端按已发送字节、接收端按已收字节实时计算，界面 150ms 节流刷新 + 速度估算 |
-| 剪贴板同步 | 2s 轮询检测本机复制并广播；接收后写入本机；用「本地已见 / 已发送 / 远端已收」三个哈希状态防循环 |
 | 大文件落盘 | 接收端边收边写 **OPFS**（源私有文件系统）`FileSystemWritableFileStream`，不占内存；完成后可从收件箱下载/删除 |
 | 取消传输 | 任一端可取消，`file-cancel` action 通知对端中止 OPFS 写入 |
 
@@ -53,18 +54,18 @@ p2p-transfer/
     │   ├── page.tsx          # 服务器组件，渲染客户端应用
     │   └── globals.css       # Tailwind 入口
     ├── components/
-    │   ├── transfer-app.tsx  # 应用外壳：房间 ID 解析、三 Tab 导航、主题管理
-    │   ├── receive-view.tsx  # 接收页：主卡片、房间信息、信令状态、传输/收件箱/剪贴板
-    │   ├── send-view.tsx     # 发送页：设备列表（多选）、选文件、拖拽投递
-    │   ├── settings-view.tsx # 设置页：设备名、主题、关于
+    │   ├── transfer-app.tsx  # 应用外壳：房间 ID 解析、三 Tab 导航、主题管理、教程弹窗
+    │   ├── receive-view.tsx  # 接收页：主卡片、房间信息、信令状态、传输/收件箱
+    │   ├── send-view.tsx     # 发送页：设备列表（多选）、文本发送、选文件、拖拽投递
+    │   ├── settings-view.tsx # 设置页：房间（复制链接/新房间）、自定义信令、主题、关于
+    │   ├── help-dialog.tsx   # 教程与原理弹窗
     │   ├── peer-list.tsx     # 在线设备胶囊行
-    │   ├── transfer-list.tsx # 传输任务进度与 OPFS 收件箱
-    │   ├── clipboard-panel.tsx # 剪贴板文本同步面板
+    │   ├── transfer-list.tsx # 传输任务进度（文件）+ 文本记录（可复制）+ OPFS 收件箱
     │   └── icons.tsx         # 内联 Material 图标
     ├── hooks/
-    │   └── use-room.ts       # trystero 房间生命周期 + 文件/剪贴板协议（全部在 useEffect 初始化）
+    │   └── use-room.ts       # trystero 房间生命周期 + 文件/文本协议 + 信令配置（全部在 useEffect 初始化）
     └── lib/
-        ├── protocol.ts       # 协议常量/消息类型/分块大小/防循环哈希
+        ├── protocol.ts       # 协议常量/消息类型/分块大小
         └── opfs.ts           # OPFS 流式保存、下载、删除
 ```
 
@@ -195,23 +196,16 @@ NEXT_PUBLIC_TRACKERS="wss://send.qvqa.cn/tracker/openwebtorrent/,wss://send.qvqa
 - 接收端维护「写链」串行写入 OPFS；数据通道可靠有序，分块按序到达，乱序时按序缓冲、完成后统一 close
 - 空文件：只发 `file-meta` 即完成
 
-### 剪贴板防循环
+### 文本传输
 
-三个哈希状态机：
-
-```
-本地已见 hash  ← 轮询读到的新文本（≠已见）→ 若 = 远端已收 hash → 是远端写入，不重发
-                                          ↓ 否则
-                                    广播 + 记入已发送 hash
-远端消息 → hash ∈ {已发送, 远端已收} ? 忽略 : 写入本机 + 记入远端已收
-```
-
-任何一端都不会把自己「因同步而写入」或「自己刚广播」的文本再次广播，从根上消除循环。
+- 「发送」页输入文本，通过 `text` action 定向发送给选中设备
+- 收发双方都会在「传输」列表生成一条文本记录（预览 + 一键复制），文本不超过 64KB 建议拆分为多条
+- v1.2 起不再有自动剪贴板同步（移除轮询与防循环逻辑），文本发送为手动触发
 
 ## 安全与限制
 
 - 业务数据仅存在于 WebRTC 加密通道中；信令仅交换 SDP/ICE，不含业务内容
 - 房间无鉴权：链接即钥匙，请勿公开分享到不受信任的地方；如需口令可启用 `joinRoom` 的 `password` 选项
-- 剪贴板读取 API 需要 **HTTPS 安全上下文** + 用户授权；首次点击「同步本机剪贴板」即可触发授权
+- 剪贴板读写 API 需要 **HTTPS 安全上下文** + 用户授权（复制文本按钮、复制链接按钮依赖它）
 - 部分严格 NAT/企业网络无法直连时，可配置 `turnConfig`（README 源码注释与 trystero 文档有示例）
 - WebRTC 浏览器连接数有限，建议房间内设备数控制在个位数

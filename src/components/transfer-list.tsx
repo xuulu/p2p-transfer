@@ -1,8 +1,10 @@
 'use client'
 
+import { useState } from 'react'
 import { formatBytes, formatPercent, formatSpeed, shortId } from '@/lib/protocol'
 import type { Transfer } from '@/hooks/use-room'
 import type { OpfsFileInfo } from '@/lib/opfs'
+import { Icon } from './icons'
 
 const STATUS_LABEL: Record<Transfer['status'], { text: string; cls: string }> = {
   active: { text: '传输中', cls: 'bg-primary-container text-on-primary-container' },
@@ -11,7 +13,52 @@ const STATUS_LABEL: Record<Transfer['status'], { text: string; cls: string }> = 
   cancelled: { text: '已取消', cls: 'bg-outline-soft text-on-surface-variant' },
 }
 
-function TransferRow({ t, onCancel }: { t: Transfer; onCancel: (fileId: string) => void }) {
+/** 文本记录行：预览 + 复制 */
+function TextRow({ t }: { t: Transfer }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(t.text ?? '')
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      /* ignore */
+    }
+  }
+  return (
+    <li className="py-3">
+      <div className="flex items-center justify-between gap-2 text-sm">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 text-on-surface-variant">
+            {t.direction === 'out' ? '↑' : '↓'}
+          </span>
+          <span className="text-xs text-on-surface-variant">文本</span>
+          <span className="hidden shrink-0 text-xs text-on-surface-variant sm:inline">
+            {t.direction === 'out' ? `→ ${t.peerId}` : `来自 ${shortId(t.peerId, 8)}`}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={() => void copy()}
+            className="flex items-center gap-1 rounded-full bg-surface2 px-2.5 py-0.5 text-xs font-medium text-on-surface-variant hover:opacity-90"
+          >
+            <Icon name="copy" className="h-3.5 w-3.5" />
+            {copied ? '已复制' : '复制'}
+          </button>
+          <span className="rounded-full bg-primary-container px-2.5 py-0.5 text-xs text-on-primary-container">
+            已完成
+          </span>
+        </span>
+      </div>
+      <p className="mt-1.5 line-clamp-2 whitespace-pre-wrap break-all rounded-xl bg-surface2 px-3 py-2 text-xs leading-relaxed text-on-surface-variant">
+        {t.text}
+      </p>
+    </li>
+  )
+}
+
+/** 文件记录行：进度条 */
+function FileRow({ t, onCancel }: { t: Transfer; onCancel: (fileId: string) => void }) {
   const pct = t.size > 0 ? Math.min(100, (t.bytes / t.size) * 100) : 100
   const status = STATUS_LABEL[t.status]
 
@@ -87,12 +134,16 @@ export function TransferList({
         )}
       </h2>
       {transfers.length === 0 ? (
-        <p className="py-1 text-xs text-on-surface-variant">暂无传输，去「发送」页选择设备与文件</p>
+        <p className="py-1 text-xs text-on-surface-variant">暂无传输，去「发送」页选择设备与文件/文本</p>
       ) : (
         <ul className="divide-y divide-outline-soft">
-          {transfers.map((t) => (
-            <TransferRow key={t.fileId} t={t} onCancel={onCancel} />
-          ))}
+          {transfers.map((t) =>
+            t.kind === 'text' ? (
+              <TextRow key={t.fileId} t={t} />
+            ) : (
+              <FileRow key={t.fileId} t={t} onCancel={onCancel} />
+            ),
+          )}
         </ul>
       )}
 

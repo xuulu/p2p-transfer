@@ -43,20 +43,9 @@ export type ChunkMeta = {
   chunkCount: number
 }
 
-/** action: 'progress' —— 发送端节流广播的传输进度 */
-export type ProgressMsg = {
-  fileId: string
-  name: string
-  size: number
-  sent: number
-  peerId: string
-  ts: number
-}
-
-/** action: 'clipboard' —— 剪贴板文本同步（带哈希防循环） */
-export type ClipboardMsg = {
+/** action: 'text' —— 文本消息传输（发送栏手动发送，非自动剪贴板同步） */
+export type TextMsg = {
   text: string
-  hash: string
   ts: number
 }
 
@@ -66,15 +55,6 @@ export type CancelMsg = {
 }
 
 // ---- 工具函数 ----
-
-/** djb2 稳定字符串哈希：用于剪贴板内容比较（防循环、去重） */
-export function hashText(text: string): string {
-  let h = 5381
-  for (let i = 0; i < text.length; i++) {
-    h = ((h << 5) + h + text.charCodeAt(i)) >>> 0
-  }
-  return h.toString(36)
-}
 
 /** 生成随机房间 ID（8 位十六进制） */
 export function randomRoomId(): string {

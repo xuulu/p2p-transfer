@@ -8,13 +8,16 @@ import { Icon } from './icons'
 export function SendView({
   peers,
   selfId,
-  onSend,
+  onSendFiles,
+  onSendText,
 }: {
   peers: Map<string, PeerInfo>
   selfId: string | null
-  onSend: (files: File[], targetIds?: string[]) => void
+  onSendFiles: (files: File[], targetIds?: string[]) => void
+  onSendText: (text: string, targetIds?: string[]) => void
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [text, setText] = useState('')
   const [dragOver, setDragOver] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const items = [...peers.values()]
@@ -31,7 +34,14 @@ export function SendView({
   const pickFiles = (list: FileList | File[]) => {
     const files = Array.from(list)
     if (files.length === 0) return
-    onSend(files, [...selected])
+    onSendFiles(files, [...selected])
+    setSelected(new Set())
+  }
+
+  const sendTextNow = () => {
+    if (!text.trim()) return
+    onSendText(text.trim(), [...selected])
+    setText('')
     setSelected(new Set())
   }
 
@@ -56,6 +66,7 @@ export function SendView({
         </span>
       </div>
 
+      {/* 设备列表（多选） */}
       {items.length === 0 ? (
         <section className="flex flex-col items-center rounded-[28px] bg-surface px-6 py-12 text-center shadow-sm">
           <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary-container text-on-primary-container">
@@ -110,7 +121,32 @@ export function SendView({
         </ul>
       )}
 
-      {/* 底部发送按钮 */}
+      {/* 文本发送 */}
+      <section className="rounded-[28px] bg-surface px-4 py-4 shadow-sm">
+        <h3 className="mb-2 text-sm font-medium text-on-surface-variant">发送文本</h3>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="输入文本，发送给选中的设备…"
+          rows={3}
+          className="w-full resize-y rounded-2xl border border-outline-soft bg-surface px-3.5 py-2.5 text-sm outline-none placeholder:text-on-surface-variant/60 focus:border-primary"
+        />
+        <div className="mt-2.5 flex items-center justify-between gap-2">
+          <p className="text-xs text-on-surface-variant">
+            {selected.size > 0 ? `将发送给 ${selected.size} 台设备` : '先选择上方设备'}
+          </p>
+          <button
+            disabled={!text.trim() || selected.size === 0}
+            onClick={sendTextNow}
+            className="flex h-10 items-center gap-1.5 rounded-full bg-primary px-4 text-sm font-semibold text-on-primary disabled:bg-outline-soft disabled:text-on-surface-variant"
+          >
+            <Icon name="send" className="h-4 w-4" />
+            发送
+          </button>
+        </div>
+      </section>
+
+      {/* 文件发送 */}
       <div
         className={
           'sticky bottom-0 -mx-4 rounded-t-3xl px-4 pb-2 pt-3 backdrop-blur ' +
@@ -128,7 +164,7 @@ export function SendView({
           className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-primary text-base font-semibold text-on-primary shadow-md disabled:bg-outline-soft disabled:text-on-surface-variant disabled:shadow-none"
         >
           <Icon name="plus" className="h-5 w-5" />
-          {selected.size > 0 ? `发送到 ${selected.size} 台设备` : '选择设备后发送文件'}
+          {selected.size > 0 ? `发送文件到 ${selected.size} 台设备` : '选择设备后发送文件'}
         </button>
         <input
           ref={inputRef}

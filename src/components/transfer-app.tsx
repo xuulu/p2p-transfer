@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRoom } from '@/hooks/use-room'
 import { DEFAULT_ROOM, randomRoomId, roomIdFromPath } from '@/lib/protocol'
+import { HelpDialog } from './help-dialog'
 import { Icon } from './icons'
 import { ReceiveView } from './receive-view'
 import { SendView } from './send-view'
@@ -17,8 +18,15 @@ const THEME_KEY = 'p2p-transfer-theme'
 export function TransferApp() {
   const [roomId, setRoomId] = useState(DEFAULT_ROOM)
   const room = useRoom(roomId)
-  const [tab, setTab] = useState<Tab>('receive')
+  const [tab, setTab] = useState<Tab>(() => {
+    if (typeof window !== 'undefined') {
+      const t = new URLSearchParams(window.location.search).get('tab')
+      if (t === 'send' || t === 'settings' || t === 'receive') return t
+    }
+    return 'receive'
+  })
   const [theme, setTheme] = useState<Theme>('system')
+  const [helpOpen, setHelpOpen] = useState(false)
   const [toast, setToast] = useState('')
 
   // 静态托管把所有路径重写到 index.html，这里从 pathname 恢复房间 ID
@@ -97,18 +105,11 @@ export function TransferApp() {
             }
           />
           <button
-            onClick={() => void copyRoomLink()}
-            title="复制房间链接"
+            onClick={() => setHelpOpen(true)}
+            title="教程与原理"
             className="rounded-full p-2 text-on-surface-variant hover:bg-surface2"
           >
-            <Icon name="link" />
-          </button>
-          <button
-            onClick={createNewRoom}
-            title="新房间"
-            className="rounded-full p-2 text-on-surface-variant hover:bg-surface2"
-          >
-            <Icon name="refresh" />
+            <Icon name="help" />
           </button>
         </div>
       </header>
@@ -116,20 +117,23 @@ export function TransferApp() {
       {/* 内容区 */}
       <main className="flex-1 overflow-y-auto px-4 pb-4">
         {tab === 'receive' && (
-          <ReceiveView
-            roomId={roomId}
-            room={room}
-            relayOpen={relayOpen}
-            relayTotal={relayTotal}
-          />
+          <ReceiveView roomId={roomId} room={room} relayOpen={relayOpen} relayTotal={relayTotal} />
         )}
         {tab === 'send' && (
-          <SendView peers={room.peers} selfId={room.selfId} onSend={room.sendFiles} />
+          <SendView
+            peers={room.peers}
+            selfId={room.selfId}
+            onSendFiles={room.sendFiles}
+            onSendText={room.sendText}
+          />
         )}
         {tab === 'settings' && (
           <SettingsView
-            deviceName={room.deviceName ?? ''}
-            onSaveDeviceName={room.saveDeviceName}
+            roomId={roomId}
+            onCopyLink={() => void copyRoomLink()}
+            onCreateRoom={createNewRoom}
+            trackers={room.trackers}
+            onSaveTrackers={room.saveTrackers}
             theme={theme}
             onThemeChange={setTheme}
           />
@@ -168,6 +172,9 @@ export function TransferApp() {
           )
         })}
       </nav>
+
+      {/* 教程弹窗 */}
+      <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
 
       {/* Toast */}
       {toast && (

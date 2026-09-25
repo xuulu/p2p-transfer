@@ -1,7 +1,6 @@
 'use client'
 
 import { useRoom } from '@/hooks/use-room'
-import { ClipboardPanel } from './clipboard-panel'
 import { Icon } from './icons'
 import { PeerList } from './peer-list'
 import { TransferList } from './transfer-list'
@@ -48,46 +47,44 @@ export function ReceiveView({
             <p className="text-xs text-on-surface-variant">当前房间</p>
             <p className="truncate font-mono text-sm font-medium text-primary">{roomId}</p>
           </div>
-          <div className="flex shrink-0 gap-2">
+          <span
+            className={
+              'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs ' +
+              (room.status === 'error'
+                ? 'bg-error/10 text-error'
+                : joining
+                  ? 'bg-outline-soft text-on-surface-variant'
+                  : relayOpen > 0
+                    ? 'bg-primary-container text-on-primary-container'
+                    : 'bg-error/10 text-error')
+            }
+          >
             <span
               className={
-                'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs ' +
+                'h-1.5 w-1.5 rounded-full ' +
                 (room.status === 'error'
-                  ? 'bg-error/10 text-error'
+                  ? 'bg-error'
                   : joining
-                    ? 'bg-outline-soft text-on-surface-variant'
+                    ? 'bg-outline'
                     : relayOpen > 0
-                      ? 'bg-primary-container text-on-primary-container'
-                      : 'bg-error/10 text-error')
+                      ? 'bg-primary'
+                      : 'bg-error')
               }
-            >
-              <span
-                className={
-                  'h-1.5 w-1.5 rounded-full ' +
-                  (room.status === 'error'
-                    ? 'bg-error'
-                    : joining
-                      ? 'bg-outline'
-                      : relayOpen > 0
-                        ? 'bg-primary'
-                        : 'bg-error')
-                }
-              />
-              {room.status === 'error'
-                ? '连接失败'
-                : joining
-                  ? '信令连接中'
-                  : relayOpen > 0
-                    ? `已连接 · 信令 ${relayOpen}/${relayTotal}`
-                    : '信令不可达'}
-            </span>
-          </div>
+            />
+            {room.status === 'error'
+              ? '连接失败'
+              : joining
+                ? '信令连接中'
+                : relayOpen > 0
+                  ? `已连接 · 信令 ${relayOpen}/${relayTotal}`
+                  : '信令不可达'}
+          </span>
         </div>
 
         {room.status === 'joined' && relayTotal > 0 && relayOpen === 0 && (
           <p className="mt-3 rounded-2xl bg-error/10 px-3 py-2 text-xs leading-relaxed text-error">
-            Tracker 信令全部不可达，设备间无法互相发现。国内网络建议用 Nginx 反代 Tracker
-            （见 README「国内网络：Nginx 反代 Tracker」）。
+            Tracker 信令全部不可达，设备间无法互相发现。可到「设置」页配置信令服务器
+            （国内网络建议 Nginx 反代，见 README）。
           </p>
         )}
         {room.status === 'error' && (
@@ -102,20 +99,13 @@ export function ReceiveView({
         </div>
       </section>
 
-      {/* 传输 */}
+      {/* 传输（文件与文本记录，文本可复制） */}
       <TransferList
         transfers={room.transfers}
         inboxFiles={room.inboxFiles}
         onCancel={room.cancelFile}
         onDownload={room.downloadInboxFile}
         onDelete={room.deleteInboxFile}
-      />
-
-      {/* 剪贴板 */}
-      <ClipboardPanel
-        status={room.clipboardStatus}
-        onBroadcast={room.broadcastClipboardText}
-        onReadAndBroadcast={room.readClipboardAndBroadcast}
       />
 
       {/* 通知 */}

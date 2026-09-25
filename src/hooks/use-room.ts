@@ -6,10 +6,9 @@ import {
   CHUNK_SIZE,
   TRACKER_URLS,
   TRYSTERO_APP_ID,
-  hashText,
   shortId,
 } from '@/lib/protocol'
-import type { CancelMsg, ChunkMeta, ClipboardMsg, FileMeta } from '@/lib/protocol'
+import type { CancelMsg, ChunkMeta, FileMeta, TextMsg } from '@/lib/protocol'
 import {
   downloadOpfsFile,
   listOpfsFiles,
@@ -23,9 +22,11 @@ type Action = MessageAction<any>
 
 export type TransferStatus = 'active' | 'done' | 'error' | 'cancelled'
 export type RoomStatus = 'idle' | 'joining' | 'joined' | 'error'
+export type TransferKind = 'file' | 'text'
 
 export interface Transfer {
   fileId: string
+  kind: TransferKind
   name: string
   size: number
   mime: string
@@ -37,6 +38,8 @@ export interface Transfer {
   speed: number
   error?: string
   readyToDownload?: boolean
+  /** 仅文本传输：消息内容 */
+  text?: string
 }
 
 export interface PeerInfo {
@@ -57,8 +60,7 @@ interface IncomingFile {
   status: 'opening' | 'active' | 'done' | 'error' | 'cancelled'
 }
 
-const DEVICE_NAME_KEY = 'p2p-transfer-device-name'
-const POLL_INTERVAL_MS = 2000
+const TRACKERS_KEY = 'p2p-transfer-trackers'
 
 export function useRoom(roomId: string) {
   const [status, setStatus] = useState<RoomStatus>('idle')
@@ -68,19 +70,18 @@ export function useRoom(roomId: string) {
   const [transfers, setTransfers] = useState<Transfer[]>([])
   const [relays, setRelays] = useState<{ url: string; state: RelayState }[]>([])
   const [inboxFiles, setInboxFiles] = useState<OpfsFileInfo[]>([])
-  const [lastRemoteClipboard, setLastRemoteClipboard] = useState<string | null>(null)
-  const [clipboardStatus, setClipboardStatus] = useState('')
   const [notice, setNotice] = useState('')
-  const [deviceName, setDeviceName] = useState<string | null>(null)
+  // 运行时信令列表：优先取设置页保存的自定义列表，否则用构建期默认
+  const [trackers, setTrackers] = useState<string[]>(TRACKER_URLS ?? [])
 
   const roomRef = useRef<Room | null>(null)
   const actionsRef = useRef<{
     fileMeta: Action | null
     fileChunk: Action | null
     fileCancel: Action | null
-    clipboard: Action | null
+    text: Action | null
     hello: Action | null
-  }>({ fileMeta: null, fileChunk: null, fileCancel: null, clipboard: null, hello: null })
+  }>({ fileMeta: null, fileChunk: null, fileCancel: null, text: null, hello: null })
   const transfersRef = useRef<Map<string, Transfer>>(new Map())
   const incomingRef = useRef<Map<string, IncomingFile>>(new Map())
   const cancelFlagsRef = useRef<Map<string, boolean>>(new Map())
@@ -88,15 +89,9 @@ export function useRoom(roomId: string) {
   const speedTrackRef = useRef<Map<string, { bytes: number; ts: number }>>(new Map())
   const peersRef = useRef<Map<string, PeerInfo>>(new Map())
   const selfIdRef = useRef<string | null>(null)
-  const deviceNameRef = useRef<string | null>(null)
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const relayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const cancelIncomingRef = useRef<(fileId: string) => Promise<void>>(async () => {})
-  // 剪贴板防循环三状态
-  const lastSeenLocalHashRef = useRef('')
-  const lastSentHashRef = useRef('')
-  const lastRemoteHashRef = useRef('')
   const inboxDirtyRef = useRef(false)
 
   // ---- 节流状态刷新 ----
@@ -140,8 +135,25 @@ export function useRoom(roomId: string) {
     }, 5000)
   }, [])
 
+  // 读取设置页保存的自定义信令列表
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(TRACKERS_KEY)
+      if (raw) {
+        const list = raw
+          .split('\n')
+          .map((s) => s.trim())
+          .filter(Boolean)
+        if (list.length > 0) setTrackers(list)
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
   // =============================================================
   // 房间生命周期（全部浏览器 API 在 useEffect 中初始化）
+  // 信令列表变化（保存自定义列表）时自动离开并重连
   // =============================================================
   useEffect(() => {
     let cancelled = false
@@ -158,12 +170,12 @@ export function useRoom(roomId: string) {
 
         const config: Parameters<typeof joinRoom>[0] = {
           appId: TRYSTERO_APP_ID,
-          relayConfig: { urls: TRACKER_URLS },
+          relayConfig: trackers.length > 0 ? { urls: trackers } : {},
         }
         room = joinRoom(config, roomId, {
           onJoinError: (details) => {
             if (cancelled) return
-            const hint = /turn/i.test(details.error) ? '（可配置 TURN 穿透，见 README）' : '（双方需同一网络或配置 TURN）'
+            const hint = /turn/i.test(details.error) ? '（可配置 TURN 穿透）' : '（双方需同一网络或配置 TURN）'
             showNotice(`与设备 ${shortId(details.peerId, 8)} 连接失败：${details.error}${hint}`)
           },
         })
@@ -194,11 +206,11 @@ export function useRoom(roomId: string) {
 
         // ---------- actions ----------
         const hello = room.makeAction<string>('hello')
-        const clipboard = room.makeAction<ClipboardMsg>('clipboard')
+        const text = room.makeAction<TextMsg>('text')
         const fileMeta = room.makeAction<FileMeta>('file-meta')
         const fileChunk = room.makeAction<DataPayload>('file-chunk')
         const fileCancel = room.makeAction<CancelMsg>('file-cancel')
-        actionsRef.current = { fileMeta, fileChunk, fileCancel, clipboard, hello }
+        actionsRef.current = { fileMeta, fileChunk, fileCancel, text, hello }
 
         // ---------- 在线设备 ----------
         room.onPeerJoin = (peerId: string) => {
@@ -207,9 +219,7 @@ export function useRoom(roomId: string) {
             if (!next.has(peerId)) next.set(peerId, { id: peerId })
             return next
           })
-          hello.send(deviceNameRef.current || shortId(selfIdRef.current ?? '我', 8), {
-            target: peerId,
-          })
+          hello.send(shortId(selfIdRef.current ?? '我', 8), { target: peerId })
         }
         room.onPeerLeave = (peerId: string) => {
           setPeers((prev) => {
@@ -232,19 +242,26 @@ export function useRoom(roomId: string) {
           })
         }
 
-        // ---------- 剪贴板接收（防循环） ----------
-        clipboard.onMessage = (data, { peerId }) => {
-          if (data.hash === lastSentHashRef.current) return
-          if (data.hash === lastRemoteHashRef.current) return
-          lastRemoteHashRef.current = data.hash
-          setLastRemoteClipboard(data.text)
-          setClipboardStatus(`收到 ${shortId(peerId, 8)} 的文本`)
-          if (navigator.clipboard?.writeText) {
-            void navigator.clipboard
-              .writeText(data.text)
-              .then(() => setClipboardStatus((s) => `${s} · 已写入本机剪贴板`))
-              .catch(() => setClipboardStatus('收到远端文本，但写入本机被拒绝'))
-          }
+        // ---------- 文本接收：记入传输列表（可复制） ----------
+        text.onMessage = (data, { peerId }) => {
+          const fileId = `text-${data.ts}-${peerId}`
+          if (transfersRef.current.has(fileId)) return
+          transfersRef.current.set(fileId, {
+            fileId,
+            kind: 'text',
+            name: '文本',
+            size: 0,
+            mime: 'text/plain',
+            direction: 'in',
+            peerId,
+            bytes: 0,
+            status: 'done',
+            startedAt: Date.now(),
+            speed: 0,
+            text: data.text,
+          })
+          flushTransfers()
+          showNotice(`收到 ${shortId(peerId, 8)} 的文本`)
         }
 
         // ---------- 文件接收：OPFS 流式落盘 ----------
@@ -281,6 +298,7 @@ export function useRoom(roomId: string) {
           incomingRef.current.set(meta.fileId, incoming)
           transfersRef.current.set(meta.fileId, {
             fileId: meta.fileId,
+            kind: 'file',
             name: meta.name,
             size: meta.size,
             mime: meta.mime,
@@ -341,24 +359,6 @@ export function useRoom(roomId: string) {
         fileCancel.onMessage = ({ fileId }) => {
           void cancelIncomingLocal(fileId)
         }
-
-        // ---------- 剪贴板轮询（防循环） ----------
-        pollRef.current = setInterval(async () => {
-          if (cancelled) return
-          if (!navigator.clipboard?.readText) return
-          try {
-            const text = await navigator.clipboard.readText()
-            const hash = hashText(text)
-            if (!hash || hash === lastSeenLocalHashRef.current) return
-            lastSeenLocalHashRef.current = hash
-            if (hash === lastRemoteHashRef.current) return
-            lastSentHashRef.current = hash
-            clipboard.send({ text, hash, ts: Date.now() })
-            setClipboardStatus('检测到本机剪贴板变化，已同步')
-          } catch {
-            /* 权限未授予时静默，由按钮显式触发 */
-          }
-        }, POLL_INTERVAL_MS)
       })
       .catch((err: unknown) => {
         if (cancelled) return
@@ -368,19 +368,15 @@ export function useRoom(roomId: string) {
 
     return () => {
       cancelled = true
-      if (pollRef.current) {
-        clearInterval(pollRef.current)
-        pollRef.current = null
-      }
       if (relayTimerRef.current) {
         clearInterval(relayTimerRef.current)
         relayTimerRef.current = null
       }
       if (room) room.leave()
       roomRef.current = null
-      actionsRef.current = { fileMeta: null, fileChunk: null, fileCancel: null, clipboard: null, hello: null }
+      actionsRef.current = { fileMeta: null, fileChunk: null, fileCancel: null, text: null, hello: null }
     }
-  }, [roomId, flushTransfers, updateTransfer, showNotice])
+  }, [roomId, trackers, flushTransfers, updateTransfer, showNotice])
 
   // ---- ref 同步 ----
   useEffect(() => {
@@ -389,12 +385,6 @@ export function useRoom(roomId: string) {
   useEffect(() => {
     selfIdRef.current = selfId
   }, [selfId])
-  useEffect(() => {
-    deviceNameRef.current = deviceName
-  }, [deviceName])
-  useEffect(() => {
-    setDeviceName(localStorage.getItem(DEVICE_NAME_KEY))
-  }, [])
 
   // =============================================================
   // 文件发送：64KB 分块 + 逐块 await（背压）
@@ -405,6 +395,11 @@ export function useRoom(roomId: string) {
       if (k.startsWith(`${fileId}::`)) total += v
     }
     return total
+  }
+
+  const resolveTargets = (targetIds?: string[]) => {
+    const all = [...peersRef.current.keys()]
+    return targetIds && targetIds.length > 0 ? all.filter((id) => targetIds.includes(id)) : all
   }
 
   const sendFileToPeer = async (file: File, peerId: string, fileId: string): Promise<boolean> => {
@@ -451,11 +446,7 @@ export function useRoom(roomId: string) {
 
   const sendFiles = useCallback(
     (files: File[], targetIds?: string[]) => {
-      const all = [...peersRef.current.keys()]
-      const targets =
-        targetIds && targetIds.length > 0
-          ? all.filter((id) => targetIds.includes(id))
-          : all
+      const targets = resolveTargets(targetIds)
       if (targets.length === 0) {
         showNotice('房间内暂无其他设备在线')
         return
@@ -465,6 +456,7 @@ export function useRoom(roomId: string) {
         const targetsForFile = [...targets]
         transfersRef.current.set(fileId, {
           fileId,
+          kind: 'file',
           name: file.name,
           size: file.size * targetsForFile.length,
           mime: file.type || 'application/octet-stream',
@@ -513,58 +505,71 @@ export function useRoom(roomId: string) {
   )
 
   // =============================================================
-  // 剪贴板对外操作
+  // 文本发送：手动输入，记入传输列表（对端可复制）
   // =============================================================
-  const broadcastClipboardText = useCallback((text: string) => {
-    const hash = hashText(text)
-    if (!hash) return
-    lastSentHashRef.current = hash
-    lastSeenLocalHashRef.current = hash
-    lastRemoteHashRef.current = hash
-    actionsRef.current.clipboard?.send({ text, hash, ts: Date.now() })
-    if (navigator.clipboard?.writeText) {
-      void navigator.clipboard.writeText(text).catch(() => {})
-    }
-    setClipboardStatus('已同步到所有设备')
-  }, [])
-
-  const readClipboardAndBroadcast = useCallback(async () => {
-    if (!navigator.clipboard?.readText) {
-      setClipboardStatus('当前环境不支持剪贴板读取（需要 HTTPS）')
-      return
-    }
-    try {
-      const text = await navigator.clipboard.readText()
-      if (text) broadcastClipboardText(text)
-      else setClipboardStatus('本机剪贴板为空')
-    } catch {
-      setClipboardStatus('剪贴板读取被拒绝：点击后授权重试')
-    }
-  }, [broadcastClipboardText])
-
-  const saveDeviceName = useCallback((name: string) => {
-    const trimmed = name.trim().slice(0, 24)
-    localStorage.setItem(DEVICE_NAME_KEY, trimmed)
-    setDeviceName(trimmed)
-    const hello = actionsRef.current.hello
-    if (hello) {
-      for (const pid of peersRef.current.keys()) hello.send(trimmed, { target: pid })
-    }
-  }, [])
+  const sendText = useCallback(
+    (text: string, targetIds?: string[]) => {
+      const targets = resolveTargets(targetIds)
+      if (targets.length === 0) {
+        showNotice('房间内暂无其他设备在线')
+        return
+      }
+      const ts = Date.now()
+      for (const peerId of targets) {
+        const fileId = `text-${ts}-${peerId}`
+        transfersRef.current.set(fileId, {
+          fileId,
+          kind: 'text',
+          name: '文本',
+          size: 0,
+          mime: 'text/plain',
+          direction: 'out',
+          peerId,
+          bytes: 0,
+          status: 'done',
+          startedAt: ts,
+          speed: 0,
+          text,
+        })
+        actionsRef.current.text?.send({ text, ts }, { target: peerId })
+      }
+      flushTransfers()
+      showNotice(`已发送文本到 ${targets.length} 台设备`)
+    },
+    [flushTransfers, showNotice],
+  )
 
   // =============================================================
   // OPFS 收件箱
   // =============================================================
   const downloadInboxFile = useCallback(async (name: string) => {
     const ok = await downloadOpfsFile(name)
-    setClipboardStatus(ok ? `已开始下载「${name}」` : `下载「${name}」失败`)
+    setNotice(ok ? `已开始下载「${name}」` : `下载「${name}」失败`)
+    setTimeout(() => setNotice(''), 2500)
   }, [])
 
   const deleteInboxFile = useCallback(async (name: string) => {
     const ok = await removeOpfsFile(name)
     if (ok) void listOpfsFiles().then(setInboxFiles)
-    else setClipboardStatus(`删除「${name}」失败`)
   }, [])
+
+  // =============================================================
+  // 信令列表设置（持久化；保存后 effect 依赖变化自动重连）
+  // =============================================================
+  const saveTrackers = useCallback(
+    (list: string[]) => {
+      const clean = list.map((s) => s.trim()).filter(Boolean)
+      try {
+        if (clean.length === 0) localStorage.removeItem(TRACKERS_KEY)
+        else localStorage.setItem(TRACKERS_KEY, clean.join('\n'))
+      } catch {
+        /* ignore */
+      }
+      setTrackers(clean.length > 0 ? clean : TRACKER_URLS ?? [])
+      showNotice(clean.length > 0 ? '已保存，正在重新连接信令…' : '已恢复默认信令，正在重新连接…')
+    },
+    [showNotice],
+  )
 
   return {
     status,
@@ -574,16 +579,13 @@ export function useRoom(roomId: string) {
     transfers,
     relays,
     inboxFiles,
-    lastRemoteClipboard,
-    clipboardStatus,
     notice,
-    deviceName,
+    trackers,
     sendFiles,
+    sendText,
     cancelFile,
-    broadcastClipboardText,
-    readClipboardAndBroadcast,
     downloadInboxFile,
     deleteInboxFile,
-    saveDeviceName,
+    saveTrackers,
   }
 }

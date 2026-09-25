@@ -9,13 +9,7 @@ import {
   hashText,
   shortId,
 } from '@/lib/protocol'
-import type {
-  CancelMsg,
-  ChunkMeta,
-  ClipboardMsg,
-  FileMeta,
-  ProgressMsg,
-} from '@/lib/protocol'
+import type { CancelMsg, ChunkMeta, ClipboardMsg, FileMeta } from '@/lib/protocol'
 import {
   downloadOpfsFile,
   listOpfsFiles,
@@ -31,21 +25,18 @@ export type TransferStatus = 'active' | 'done' | 'error' | 'cancelled'
 export type RoomStatus = 'idle' | 'joining' | 'joined' | 'error'
 
 export interface Transfer {
-  /** 出方向：一个文件一次发送（聚合所有目标设备）；入方向：一条接收流 */
   fileId: string
   name: string
-  /** 出方向为 文件大小 × 目标设备数（总传输量）；入方向为文件大小 */
   size: number
   mime: string
   direction: 'in' | 'out'
-  /** 出方向为设备数描述；入方向为发送方设备 ID */
   peerId: string
   bytes: number
   status: TransferStatus
   startedAt: number
-  speed: number // bytes/s，节流刷新时估算
+  speed: number
   error?: string
-  readyToDownload?: boolean // 入方向：已完整落盘到 OPFS
+  readyToDownload?: boolean
 }
 
 export interface PeerInfo {
@@ -53,60 +44,41 @@ export interface PeerInfo {
   name?: string
 }
 
-export interface ClipboardLogItem {
-  ts: number
-  peerId: string
-  direction: 'in' | 'out'
-  text: string
-}
+export type RelayState = 'connecting' | 'open' | 'closed'
 
 /** 接收中的文件：写链串行化 + OPFS 流式落盘 */
 interface IncomingFile {
   meta: FileMeta
   peerId: string
   writer: OpfsWriter | null
-  received: number // 已收字节（封顶 meta.size）
-  queue: Uint8Array<ArrayBuffer>[] // 等待 writer 就绪时暂存（数据通道有序时恒为空）
+  received: number
+  queue: Uint8Array<ArrayBuffer>[]
   writeChain: Promise<void>
   status: 'opening' | 'active' | 'done' | 'error' | 'cancelled'
 }
 
-const DEVICE_NAME_KEY = 'p2p-transfer-device-name'
 const POLL_INTERVAL_MS = 2000
-const PROGRESS_BROADCAST_STEP = 0.01 // 每 1% 广播一次进度
 
 export function useRoom(roomId: string) {
-  // ---- 对外状态 ----
   const [status, setStatus] = useState<RoomStatus>('idle')
   const [errorMsg, setErrorMsg] = useState('')
   const [selfId, setSelfId] = useState<string | null>(null)
   const [peers, setPeers] = useState<Map<string, PeerInfo>>(new Map())
   const [transfers, setTransfers] = useState<Transfer[]>([])
-  const [remoteTransfers, setRemoteTransfers] = useState<ProgressMsg[]>([])
+  const [relays, setRelays] = useState<{ url: string; state: RelayState }[]>([])
   const [inboxFiles, setInboxFiles] = useState<OpfsFileInfo[]>([])
-  const [deviceName, setDeviceName] = useState('')
   const [lastRemoteClipboard, setLastRemoteClipboard] = useState<string | null>(null)
   const [clipboardStatus, setClipboardStatus] = useState('')
-  const [clipboardLog, setClipboardLog] = useState<ClipboardLogItem[]>([])
   const [notice, setNotice] = useState('')
 
-  // ---- 内部引用（跨异步回调的状态来源，避免闭包过期） ----
   const roomRef = useRef<Room | null>(null)
   const actionsRef = useRef<{
     fileMeta: Action | null
     fileChunk: Action | null
     fileCancel: Action | null
-    progress: Action | null
     clipboard: Action | null
     hello: Action | null
-  }>({
-    fileMeta: null,
-    fileChunk: null,
-    fileCancel: null,
-    progress: null,
-    clipboard: null,
-    hello: null,
-  })
+  }>({ fileMeta: null, fileChunk: null, fileCancel: null, clipboard: null, hello: null })
   const transfersRef = useRef<Map<string, Transfer>>(new Map())
   const incomingRef = useRef<Map<string, IncomingFile>>(new Map())
   const cancelFlagsRef = useRef<Map<string, boolean>>(new Map())
@@ -114,20 +86,17 @@ export function useRoom(roomId: string) {
   const speedTrackRef = useRef<Map<string, { bytes: number; ts: number }>>(new Map())
   const peersRef = useRef<Map<string, PeerInfo>>(new Map())
   const selfIdRef = useRef<string | null>(null)
-  const deviceNameRef = useRef(deviceName)
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const relayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const cancelIncomingRef = useRef<(fileId: string) => Promise<void>>(async () => {})
   // 剪贴板防循环三状态
-  const lastSeenLocalHashRef = useRef('') // 本机剪贴板最近一次看到的哈希
-  const lastSentHashRef = useRef('') // 本机广播过的哈希（忽略回声）
-  const lastRemoteHashRef = useRef('') // 最近一次来自远端的哈希（不重发）
-  const lastProgressSentRef = useRef<Map<string, number>>(new Map())
+  const lastSeenLocalHashRef = useRef('')
+  const lastSentHashRef = useRef('')
+  const lastRemoteHashRef = useRef('')
   const inboxDirtyRef = useRef(false)
 
-  // =============================================================
-  // 节流状态刷新：进度高频更新，但只每 150ms 镜像到 React 状态
-  // =============================================================
+  // ---- 节流状态刷新 ----
   const flushTransfers = useCallback(() => {
     if (flushTimerRef.current) return
     flushTimerRef.current = setTimeout(() => {
@@ -165,11 +134,11 @@ export function useRoom(roomId: string) {
     setNotice(msg)
     setTimeout(() => {
       setNotice((cur) => (cur === msg ? '' : cur))
-    }, 3500)
+    }, 5000)
   }, [])
 
   // =============================================================
-  // 房间生命周期：trystero 全部在 useEffect 中初始化（浏览器 API）
+  // 房间生命周期（全部浏览器 API 在 useEffect 中初始化）
   // =============================================================
   useEffect(() => {
     let cancelled = false
@@ -181,34 +150,52 @@ export function useRoom(roomId: string) {
     void import('@trystero-p2p/torrent')
       .then((mod) => {
         if (cancelled) return
-        const { joinRoom, selfId } = mod
+        const { joinRoom, selfId, getRelaySockets } = mod
         setSelfId(selfId)
 
         const config: Parameters<typeof joinRoom>[0] = {
           appId: TRYSTERO_APP_ID,
-          // 传自定义公共 Tracker；未配置时使用 trystero 内置默认公共 Tracker
-          ...(TRACKER_URLS ? { relayConfig: { urls: TRACKER_URLS } } : {}),
+          relayConfig: { urls: TRACKER_URLS },
         }
-        room = joinRoom(config, roomId)
+        room = joinRoom(config, roomId, {
+          onJoinError: (details) => {
+            if (cancelled) return
+            const hint = /turn/i.test(details.error) ? '（可配置 TURN 穿透，见 README）' : '（双方需同一网络或配置 TURN）'
+            showNotice(`与设备 ${shortId(details.peerId, 8)} 连接失败：${details.error}${hint}`)
+          },
+        })
         roomRef.current = room
         setStatus('joined')
+
+        // ---------- 信令（Tracker）连接状态 ----------
+        const refreshRelays = () => {
+          try {
+            const sockets = (getRelaySockets?.() ?? {}) as Record<string, WebSocket>
+            setRelays(
+              Object.entries(sockets).map(([url, ws]) => ({
+                url,
+                state:
+                  ws.readyState === WebSocket.OPEN
+                    ? 'open'
+                    : ws.readyState === WebSocket.CONNECTING
+                      ? 'connecting'
+                      : 'closed',
+              })),
+            )
+          } catch {
+            setRelays([])
+          }
+        }
+        refreshRelays()
+        relayTimerRef.current = setInterval(refreshRelays, 3000)
 
         // ---------- actions ----------
         const hello = room.makeAction<string>('hello')
         const clipboard = room.makeAction<ClipboardMsg>('clipboard')
         const fileMeta = room.makeAction<FileMeta>('file-meta')
-        // 二进制载荷：发送 Uint8Array，接收端收到原始 ArrayBuffer
         const fileChunk = room.makeAction<DataPayload>('file-chunk')
         const fileCancel = room.makeAction<CancelMsg>('file-cancel')
-        const progress = room.makeAction<ProgressMsg>('progress')
-        actionsRef.current = {
-          fileMeta,
-          fileChunk,
-          fileCancel,
-          progress,
-          clipboard,
-          hello,
-        }
+        actionsRef.current = { fileMeta, fileChunk, fileCancel, clipboard, hello }
 
         // ---------- 在线设备 ----------
         room.onPeerJoin = (peerId: string) => {
@@ -217,10 +204,7 @@ export function useRoom(roomId: string) {
             if (!next.has(peerId)) next.set(peerId, { id: peerId })
             return next
           })
-          // 新设备加入时告知本机名称
-          hello.send(deviceNameRef.current || shortId(selfIdRef.current ?? '', 8), {
-            target: peerId,
-          })
+          hello.send(shortId(selfIdRef.current ?? '我', 8), { target: peerId })
         }
         room.onPeerLeave = (peerId: string) => {
           setPeers((prev) => {
@@ -228,14 +212,9 @@ export function useRoom(roomId: string) {
             next.delete(peerId)
             return next
           })
-          // 对端掉线：将涉及它的传输标记为错误（已完成的除外）
           for (const t of transfersRef.current.values()) {
             if (t.peerId === peerId && t.status === 'active') {
-              transfersRef.current.set(t.fileId, {
-                ...t,
-                status: 'error',
-                error: '对端已离线',
-              })
+              transfersRef.current.set(t.fileId, { ...t, status: 'error', error: '对端已离线' })
             }
           }
           flushTransfers()
@@ -248,22 +227,18 @@ export function useRoom(roomId: string) {
           })
         }
 
-        // ---------- 剪贴板接收（防循环：忽略自己广播的回声与重复） ----------
+        // ---------- 剪贴板接收（防循环） ----------
         clipboard.onMessage = (data, { peerId }) => {
-          if (data.hash === lastSentHashRef.current) return // 回声
-          if (data.hash === lastRemoteHashRef.current) return // 重复
+          if (data.hash === lastSentHashRef.current) return
+          if (data.hash === lastRemoteHashRef.current) return
           lastRemoteHashRef.current = data.hash
           setLastRemoteClipboard(data.text)
-          setClipboardStatus(`收到 ${shortId(peerId)} 的剪贴板文本`)
-          setClipboardLog((l) => [
-            ...l.slice(-49),
-            { ts: data.ts, peerId, direction: 'in', text: data.text },
-          ])
+          setClipboardStatus(`收到 ${shortId(peerId, 8)} 的文本`)
           if (navigator.clipboard?.writeText) {
             void navigator.clipboard
               .writeText(data.text)
-              .then(() => setClipboardStatus((s) => `${s}（已写入本机剪贴板）`))
-              .catch(() => setClipboardStatus('收到远端剪贴板，但写入本机被拒绝（需用户手势）'))
+              .then(() => setClipboardStatus((s) => `${s} · 已写入本机剪贴板`))
+              .catch(() => setClipboardStatus('收到远端文本，但写入本机被拒绝'))
           }
         }
 
@@ -315,11 +290,9 @@ export function useRoom(roomId: string) {
           try {
             incoming.writer = await openOpfsWriter(meta.name)
             incoming.status = 'active'
-            // 冲刷暂存队列（数据通道有序时队列恒为空）
             while (incoming.queue.length > 0) {
               enqueueWrite(incoming, incoming.queue.shift()!)
             }
-            // 空文件：没有分块，直接完成
             if (incoming.received >= meta.size) void finishIncoming(incoming)
           } catch (err) {
             incoming.status = 'error'
@@ -364,15 +337,7 @@ export function useRoom(roomId: string) {
           void cancelIncomingLocal(fileId)
         }
 
-        progress.onMessage = (data) => {
-          setRemoteTransfers((prev) => {
-            const rest = prev.filter((p) => p.fileId !== data.fileId)
-            if (data.sent >= data.size) return rest // 完成后移除
-            return [...rest, data].sort((a, b) => b.ts - a.ts)
-          })
-        }
-
-        // ---------- 剪贴板轮询（检测本机复制 → 广播；防循环） ----------
+        // ---------- 剪贴板轮询（防循环） ----------
         pollRef.current = setInterval(async () => {
           if (cancelled) return
           if (!navigator.clipboard?.readText) return
@@ -381,23 +346,13 @@ export function useRoom(roomId: string) {
             const hash = hashText(text)
             if (!hash || hash === lastSeenLocalHashRef.current) return
             lastSeenLocalHashRef.current = hash
-            if (hash === lastRemoteHashRef.current) {
-              // 这是远端消息触发写入的文本 → 视为本机写入，不再重发
-              return
-            }
+            if (hash === lastRemoteHashRef.current) return
             lastSentHashRef.current = hash
             clipboard.send({ text, hash, ts: Date.now() })
-            setClipboardStatus('检测到本机剪贴板变化，已广播')
-            setClipboardLog((l) => [
-              ...l.slice(-49),
-              { ts: Date.now(), peerId: 'self', direction: 'out', text },
-            ])
+            setClipboardStatus('检测到本机剪贴板变化，已同步')
           } catch {
-            // 读取被权限拒绝时静默；由「同步本机剪贴板」按钮显式触发授权
+            /* 权限未授予时静默，由按钮显式触发 */
           }
-          // 顺带清理过期的远端进度展示
-          const cutoff = Date.now() - 30_000
-          setRemoteTransfers((prev) => prev.filter((p) => p.ts >= cutoff))
         }, POLL_INTERVAL_MS)
       })
       .catch((err: unknown) => {
@@ -412,18 +367,15 @@ export function useRoom(roomId: string) {
         clearInterval(pollRef.current)
         pollRef.current = null
       }
+      if (relayTimerRef.current) {
+        clearInterval(relayTimerRef.current)
+        relayTimerRef.current = null
+      }
       if (room) room.leave()
       roomRef.current = null
-      actionsRef.current = {
-        fileMeta: null,
-        fileChunk: null,
-        fileCancel: null,
-        progress: null,
-        clipboard: null,
-        hello: null,
-      }
+      actionsRef.current = { fileMeta: null, fileChunk: null, fileCancel: null, clipboard: null, hello: null }
     }
-  }, [roomId, flushTransfers, updateTransfer])
+  }, [roomId, flushTransfers, updateTransfer, showNotice])
 
   // ---- ref 同步 ----
   useEffect(() => {
@@ -432,16 +384,9 @@ export function useRoom(roomId: string) {
   useEffect(() => {
     selfIdRef.current = selfId
   }, [selfId])
-  useEffect(() => {
-    deviceNameRef.current = deviceName
-  }, [deviceName])
-  useEffect(() => {
-    const saved = localStorage.getItem(DEVICE_NAME_KEY)
-    if (saved) setDeviceName(saved)
-  }, [])
 
   // =============================================================
-  // 文件发送：64KB 分块 + 逐块 await（背压）+ 节流进度广播
+  // 文件发送：64KB 分块 + 逐块 await（背压）
   // =============================================================
   const sumPerPeer = (fileId: string) => {
     let total = 0
@@ -451,27 +396,7 @@ export function useRoom(roomId: string) {
     return total
   }
 
-  const maybeBroadcastProgress = (fileId: string, file: File, sent: number) => {
-    const last = lastProgressSentRef.current.get(fileId) ?? 0
-    const step = Math.max(1, Math.round(file.size * PROGRESS_BROADCAST_STEP))
-    if (sent - last >= step || sent >= file.size) {
-      lastProgressSentRef.current.set(fileId, sent)
-      actionsRef.current.progress?.send({
-        fileId,
-        name: file.name,
-        size: file.size,
-        sent,
-        peerId: selfIdRef.current ?? '',
-        ts: Date.now(),
-      })
-    }
-  }
-
-  const sendFileToPeer = async (
-    file: File,
-    peerId: string,
-    fileId: string,
-  ): Promise<boolean> => {
+  const sendFileToPeer = async (file: File, peerId: string, fileId: string): Promise<boolean> => {
     const chunkCount = file.size === 0 ? 0 : Math.ceil(file.size / CHUNK_SIZE)
     try {
       await actionsRef.current.fileMeta!.send(
@@ -490,9 +415,7 @@ export function useRoom(roomId: string) {
         const start = seq * CHUNK_SIZE
         const end = Math.min(start + CHUNK_SIZE, file.size)
         const buf = new Uint8Array(await file.slice(start, end).arrayBuffer())
-        // 关键背压点：await 到本块在数据通道中完成发送后才发下一块。
-        // trystero 内部按 RTCDataChannel bufferedAmount 节流，
-        // 该 Promise 在数据真正送出后 resolve，天然形成流控。
+        // 背压：await 到本块发送完成再发下一块
         await actionsRef.current.fileChunk!.send(buf, {
           target: peerId,
           metadata: { fileId, seq, chunkCount },
@@ -504,7 +427,6 @@ export function useRoom(roomId: string) {
           transfersRef.current.set(fileId, { ...t, bytes: sumPerPeer(fileId) })
           flushTransfers()
         }
-        maybeBroadcastProgress(fileId, file, sent)
       }
       return !cancelFlagsRef.current.get(fileId)
     } catch (err) {
@@ -516,12 +438,11 @@ export function useRoom(roomId: string) {
     }
   }
 
-  /** 发送一组文件到当前房间所有在线设备 */
   const sendFiles = useCallback(
     (files: File[]) => {
       const targets = [...peersRef.current.keys()]
       if (targets.length === 0) {
-        showNotice('当前房间没有在线设备，无法发送')
+        showNotice('房间内暂无其他设备在线')
         return
       }
       for (const file of files) {
@@ -540,9 +461,7 @@ export function useRoom(roomId: string) {
           speed: 0,
         })
         flushTransfers()
-        void Promise.allSettled(
-          targetsForFile.map((peerId) => sendFileToPeer(file, peerId, fileId)),
-        )
+        void Promise.allSettled(targetsForFile.map((peerId) => sendFileToPeer(file, peerId, fileId)))
           .then((results) => {
             const ok = results.some((r) => r.status === 'fulfilled' && r.value)
             const t = transfersRef.current.get(fileId)
@@ -552,9 +471,7 @@ export function useRoom(roomId: string) {
                 status: 'done',
                 bytes: Math.min(sumPerPeer(fileId), t.size),
               })
-              showNotice(
-                `已发送「${file.name}」到 ${results.filter((r) => r.status === 'fulfilled').length}/${targetsForFile.length} 台设备`,
-              )
+              showNotice(`已发送「${file.name}」`)
             } else {
               updateTransfer(fileId, { status: 'error', error: '所有目标设备均发送失败' })
             }
@@ -567,7 +484,6 @@ export function useRoom(roomId: string) {
     [flushTransfers, showNotice, updateTransfer],
   )
 
-  /** 取消传输（本端 + 通知对端） */
   const cancelFile = useCallback(
     (fileId: string) => {
       cancelFlagsRef.current.set(fileId, true)
@@ -584,28 +500,22 @@ export function useRoom(roomId: string) {
   // =============================================================
   // 剪贴板对外操作
   // =============================================================
-  /** 广播文本并写入本机剪贴板（防循环由哈希三状态保证） */
   const broadcastClipboardText = useCallback((text: string) => {
     const hash = hashText(text)
     if (!hash) return
     lastSentHashRef.current = hash
     lastSeenLocalHashRef.current = hash
-    lastRemoteHashRef.current = hash // 本地视角：避免轮询把它当成本地新复制而重发
+    lastRemoteHashRef.current = hash
     actionsRef.current.clipboard?.send({ text, hash, ts: Date.now() })
     if (navigator.clipboard?.writeText) {
       void navigator.clipboard.writeText(text).catch(() => {})
     }
-    setClipboardStatus('已广播剪贴板文本')
-    setClipboardLog((l) => [
-      ...l.slice(-49),
-      { ts: Date.now(), peerId: 'self', direction: 'out', text },
-    ])
+    setClipboardStatus('已同步到所有设备')
   }, [])
 
-  /** 读取本机剪贴板并广播（显式触发，用于首次授权） */
   const readClipboardAndBroadcast = useCallback(async () => {
     if (!navigator.clipboard?.readText) {
-      setClipboardStatus('当前环境不支持剪贴板读取（需要 HTTPS 安全上下文）')
+      setClipboardStatus('当前环境不支持剪贴板读取（需要 HTTPS）')
       return
     }
     try {
@@ -613,25 +523,12 @@ export function useRoom(roomId: string) {
       if (text) broadcastClipboardText(text)
       else setClipboardStatus('本机剪贴板为空')
     } catch {
-      setClipboardStatus('剪贴板读取被拒绝：请先在浏览器地址栏授予剪贴板权限后重试')
+      setClipboardStatus('剪贴板读取被拒绝：点击后授权重试')
     }
   }, [broadcastClipboardText])
 
-  /** 修改本机设备名：本地持久化 + 广播给所有在线设备 */
-  const saveDeviceName = useCallback((name: string) => {
-    const trimmed = name.trim()
-    setDeviceName(trimmed)
-    deviceNameRef.current = trimmed
-    try {
-      localStorage.setItem(DEVICE_NAME_KEY, trimmed)
-    } catch {
-      /* ignore */
-    }
-    if (trimmed) actionsRef.current.hello?.send(trimmed)
-  }, [])
-
   // =============================================================
-  // OPFS 收件箱操作
+  // OPFS 收件箱
   // =============================================================
   const downloadInboxFile = useCallback(async (name: string) => {
     const ok = await downloadOpfsFile(name)
@@ -650,14 +547,11 @@ export function useRoom(roomId: string) {
     selfId,
     peers,
     transfers,
-    remoteTransfers,
+    relays,
     inboxFiles,
-    deviceName,
     lastRemoteClipboard,
     clipboardStatus,
-    clipboardLog,
     notice,
-    saveDeviceName,
     sendFiles,
     cancelFile,
     broadcastClipboardText,

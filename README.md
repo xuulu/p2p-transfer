@@ -13,7 +13,7 @@
 | 设备发现 | `@trystero-p2p/torrent`（trystero 的 BitTorrent 传输）通过公共 WebSocket BitTorrent Tracker 组播信令；连接建立后为 WebRTC Mesh |
 | 在线设备 | `room.onPeerJoin / onPeerLeave` 维护设备表，`hello` action 交换设备名 |
 | 文件传输 | 应用层按 **64KB** 分块，`file-chunk` action 逐块发送并 **`await` 每块的发送 Promise**（背压），对端按写链串行落盘 |
-| 传输进度 | 发送端按 1% 步长广播 `progress` action；接收端按已收字节计算，界面 150ms 节流刷新 + 速度估算 |
+| 传输进度 | 发送端按已发送字节、接收端按已收字节实时计算，界面 150ms 节流刷新 + 速度估算 |
 | 剪贴板同步 | 2s 轮询检测本机复制并广播；接收后写入本机；用「本地已见 / 已发送 / 远端已收」三个哈希状态防循环 |
 | 大文件落盘 | 接收端边收边写 **OPFS**（源私有文件系统）`FileSystemWritableFileStream`，不占内存；完成后可从收件箱下载/删除 |
 | 取消传输 | 任一端可取消，`file-cancel` action 通知对端中止 OPFS 写入 |
@@ -55,7 +55,7 @@ p2p-transfer/
     │   ├── transfer-app.tsx  # 主应用：房间 ID 解析、布局编排、链接分享
     │   ├── peer-list.tsx     # 在线设备列表
     │   ├── file-dropzone.tsx # 拖拽/点击选择文件
-    │   ├── transfer-list.tsx # 传输任务、远端进度、OPFS 收件箱
+    │   ├── transfer-list.tsx # 传输任务进度与 OPFS 收件箱
     │   └── clipboard-panel.tsx # 剪贴板文本同步面板
     ├── hooks/
     │   └── use-room.ts       # trystero 房间生命周期 + 文件/剪贴板协议（全部在 useEffect 初始化）
@@ -114,19 +114,73 @@ server {
 }
 ```
 
-### 其他（Vercel/Netlify 函数的 SPA fallback 等）
+### 国内网络：Nginx 反代 Tracker
 
-原理相同：`/*` → `index.html`（200 而非 404），客户端从 `pathname` 恢复房间 ID。
+公共 BitTorrent Tracker 多为境外节点，国内网络常无法直连（表现：页面顶部状态行显示
+「Tracker 信令全部不可达」）。推荐用你的服务器反代 Tracker 信令，让设备都连到你的域名：
+
+```nginx
+# 需要 map 支持（http 块内）：把 wss 升级头转发给上游
+map $http_upgrade $connection_upgrade {
+  default upgrade;
+  ''      close;
+}
+
+server {
+  # ... 上述站点配置 ...
+
+  location /tracker/openwebtorrent/ {
+    proxy_pass https://tracker.openwebtorrent.com/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Host tracker.openwebtorrent.com;
+    proxy_read_timeout 3600s;
+  }
+  location /tracker/webtorrent-dev/ {
+    proxy_pass https://tracker.webtorrent.dev/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Host tracker.webtorrent.dev;
+    proxy_read_timeout 3600s;
+  }
+}
+```
+
+然后**构建时**注入反代地址（必须重新 `npm run build`）：
+
+```bash
+NEXT_PUBLIC_TRACKERS="wss://send.qvqa.cn/tracker/openwebtorrent/,wss://send.qvqa.cn/tracker/webtorrent-dev/" npm run build
+```
+
+> 说明：trystero 会同时连接列表里的所有 Tracker，任一可达即能完成信令交换。默认值
+> 是实测在线的两个公共节点（`tracker.webtorrent.dev`、`tracker.openwebtorrent.com`）；
+> 国内网络连不通时，按上文反代并重新构建即可。
 
 ## 环境变量（构建期）
 
 - `NEXT_PUBLIC_TRACKERS`：逗号分隔的公共 WebSocket Tracker 列表，覆盖默认值。例如：
 
   ```bash
-  NEXT_PUBLIC_TRACKERS="wss://tracker.openwebtorrent.com,wss://tracker.btorrent.xyz" npm run build
+  NEXT_PUBLIC_TRACKERS="wss://send.qvqa.cn/tracker/openwebtorrent/,wss://send.qvqa.cn/tracker/webtorrent-dev/" npm run build
   ```
 
-  不设置时使用 trystero 内置默认公共 Tracker。
+  不设置时使用内置默认：`wss://tracker.webtorrent.dev, wss://tracker.openwebtorrent.com`
+  （均为实测在线节点；如需覆盖再设置）。
+
+## 通信排查（“两台设备互相看不到/传不了”）
+
+页面顶部状态行实时显示：`信令 N/M · 设备 K 台在线`。
+
+| 现象 | 含义 | 处理 |
+| --- | --- | --- |
+| 状态点变红/琥珀 + “Tracker 信令全部不可达” | 公共 Tracker 连不上（国内网络常见） | 按上文「Nginx 反代 Tracker」配置并重新构建 |
+| 信令正常但两台设备互相看不到 | WebRTC 直连失败（NAT 严格/企业网） | 为 `joinRoom` 配置 `turnConfig`（见 trystero 文档），或让两台设备处于同一局域网 |
+| 设备在线但传输失败 | 个别 NAT 类型直连失败 | 同上，启用 TURN |
+| 提示“与设备 xx 连接失败：…TURN…” | 握手阶段就要求 TURN | 配置 TURN 服务器 |
+
+浏览器控制台（F12）也会打印 trystero 的信令连接警告，可进一步确认是哪一层失败。
 
 ## 协议细节
 

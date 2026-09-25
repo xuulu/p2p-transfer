@@ -5,7 +5,7 @@
   "description": "无服务器 P2P 跨设备文件与剪贴板传输平台（Next.js 16 + trystero + WebRTC Mesh，纯静态导出）",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build && node -e \"require('fs').copyFileSync('public/404.html', 'out/404.html')\"",
     "preview": "serve out",
     "typecheck": "tsc --noEmit"
   },

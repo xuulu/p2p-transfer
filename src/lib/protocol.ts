@@ -10,16 +10,17 @@ export const CHUNK_SIZE = 64 * 1024
 export const TRYSTERO_APP_ID = 'p2p-transfer-platform-v1'
 
 /**
- * 公共 BitTorrent Tracker 列表（可选覆盖）。
- * 留空（undefined）时使用 trystero 内置的默认公共 WebSocket Tracker。
- * 可在构建时用 NEXT_PUBLIC_TRACKERS 环境变量传入逗号分隔列表覆盖：
- *   NEXT_PUBLIC_TRACKERS="wss://tracker.openwebtorrent.com,wss://tracker.btorrent.xyz" npm run build
+ * 公共 BitTorrent Tracker 列表（默认使用实测在线的节点）。
+ * trystero 内置默认列表里多个 Tracker 已失效（open.ftorrent / btorrent.xyz / files.fm），
+ * 且均为境外节点，国内网络常不可达。国内部署建议用自有服务器（如 send.qvqa.cn 的 Nginx）
+ * 反代 Tracker 信令，见 README「国内网络：Nginx 反代 Tracker」一节，构建时用环境变量覆盖：
+ *   NEXT_PUBLIC_TRACKERS="wss://send.qvqa.cn/tracker/openwebtorrent/,wss://send.qvqa.cn/tracker/webtorrent-dev/" npm run build
  */
 export const TRACKER_URLS: string[] | undefined = process.env.NEXT_PUBLIC_TRACKERS
   ? process.env.NEXT_PUBLIC_TRACKERS.split(',')
       .map((s) => s.trim())
       .filter(Boolean)
-  : undefined
+  : ['wss://tracker.webtorrent.dev', 'wss://tracker.openwebtorrent.com']
 
 export const DEFAULT_ROOM = 'default'
 

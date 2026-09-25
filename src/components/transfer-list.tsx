@@ -5,10 +5,10 @@ import type { Transfer } from '@/hooks/use-room'
 import type { OpfsFileInfo } from '@/lib/opfs'
 
 const STATUS_LABEL: Record<Transfer['status'], { text: string; cls: string }> = {
-  active: { text: '传输中', cls: 'bg-sky-500/15 text-sky-300' },
-  done: { text: '已完成', cls: 'bg-emerald-500/15 text-emerald-300' },
-  error: { text: '失败', cls: 'bg-red-500/15 text-red-300' },
-  cancelled: { text: '已取消', cls: 'bg-slate-500/15 text-slate-400' },
+  active: { text: '传输中', cls: 'bg-primary-container text-on-primary-container' },
+  done: { text: '已完成', cls: 'bg-primary-container text-on-primary-container' },
+  error: { text: '失败', cls: 'bg-error/10 text-error' },
+  cancelled: { text: '已取消', cls: 'bg-outline-soft text-on-surface-variant' },
 }
 
 function TransferRow({ t, onCancel }: { t: Transfer; onCancel: (fileId: string) => void }) {
@@ -16,40 +16,42 @@ function TransferRow({ t, onCancel }: { t: Transfer; onCancel: (fileId: string) 
   const status = STATUS_LABEL[t.status]
 
   return (
-    <li className="py-2">
+    <li className="py-3">
       <div className="flex items-center justify-between gap-2 text-sm">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className="shrink-0 text-slate-500">{t.direction === 'out' ? '↑' : '↓'}</span>
-          <span className="truncate" title={t.name}>
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 text-on-surface-variant">
+            {t.direction === 'out' ? '↑' : '↓'}
+          </span>
+          <span className="truncate font-medium" title={t.name}>
             {t.name}
           </span>
-          <span className="shrink-0 text-xs text-slate-500">
+          <span className="hidden shrink-0 text-xs text-on-surface-variant sm:inline">
             {t.direction === 'out' ? `→ ${t.peerId}` : `来自 ${shortId(t.peerId, 8)}`}
           </span>
         </span>
         <span className="flex shrink-0 items-center gap-2">
           {t.status === 'active' && (
-            <button onClick={() => onCancel(t.fileId)} className="text-xs text-red-400 hover:text-red-300">
+            <button onClick={() => onCancel(t.fileId)} className="text-xs text-error hover:underline">
               取消
             </button>
           )}
-          <span className={`rounded-full px-2 py-0.5 text-xs ${status.cls}`}>{status.text}</span>
+          <span className={`rounded-full px-2.5 py-0.5 text-xs ${status.cls}`}>{status.text}</span>
         </span>
       </div>
-      <div className="mt-1.5 flex items-center gap-2">
-        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800">
+      <div className="mt-2 flex items-center gap-2">
+        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-outline-soft">
           <div
-            className={`h-full rounded-full ${
-              t.status === 'error' || t.status === 'cancelled' ? 'bg-slate-600' : 'bg-emerald-500'
+            className={`h-full rounded-full transition-[width] ${
+              t.status === 'error' || t.status === 'cancelled' ? 'bg-outline' : 'bg-primary'
             }`}
             style={{ width: `${pct}%` }}
           />
         </div>
-        <span className="w-11 shrink-0 text-right text-xs tabular-nums text-slate-400">
+        <span className="w-11 shrink-0 text-right text-xs tabular-nums text-on-surface-variant">
           {formatPercent(t.bytes, t.size)}
         </span>
       </div>
-      <div className="mt-0.5 flex justify-between text-xs text-slate-500">
+      <div className="mt-1 flex justify-between text-xs text-on-surface-variant">
         <span className="tabular-nums">
           {formatBytes(t.bytes)} / {formatBytes(t.size)}
         </span>
@@ -77,14 +79,17 @@ export function TransferList({
   onDelete: (name: string) => void
 }) {
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
-      <h2 className="mb-1 text-sm font-semibold text-slate-300">
-        传输{transfers.length > 0 && <span className="ml-1 text-xs font-normal text-slate-500">{transfers.length}</span>}
+    <section className="rounded-[28px] bg-surface px-5 py-5 shadow-sm">
+      <h2 className="text-sm font-medium text-on-surface-variant">
+        传输
+        {transfers.length > 0 && (
+          <span className="ml-1 text-xs text-on-surface-variant">{transfers.length}</span>
+        )}
       </h2>
       {transfers.length === 0 ? (
-        <p className="py-1 text-xs text-slate-600">暂无传输，拖拽或点击上方区域发送文件</p>
+        <p className="py-1 text-xs text-on-surface-variant">暂无传输，去「发送」页选择设备与文件</p>
       ) : (
-        <ul className="divide-y divide-slate-800/70">
+        <ul className="divide-y divide-outline-soft">
           {transfers.map((t) => (
             <TransferRow key={t.fileId} t={t} onCancel={onCancel} />
           ))}
@@ -93,27 +98,29 @@ export function TransferList({
 
       {inboxFiles.length > 0 && (
         <>
-          <h2 className="mb-1 mt-4 text-sm font-semibold text-slate-300">
+          <h2 className="mt-4 text-sm font-medium text-on-surface-variant">
             收件箱
-            <span className="ml-1 text-xs font-normal text-slate-500">{inboxFiles.length}</span>
+            <span className="ml-1 text-xs text-on-surface-variant">{inboxFiles.length}</span>
           </h2>
-          <ul className="divide-y divide-slate-800/70">
+          <ul className="divide-y divide-outline-soft">
             {inboxFiles.map((f) => (
-              <li key={f.name} className="flex items-center justify-between gap-2 py-2 text-sm">
-                <span className="min-w-0 truncate" title={f.name}>
+              <li key={f.name} className="flex items-center justify-between gap-2 py-2.5 text-sm">
+                <span className="min-w-0 truncate font-medium" title={f.name}>
                   {f.name}
-                  <span className="ml-2 text-xs text-slate-500">{formatBytes(f.size)}</span>
+                  <span className="ml-2 text-xs font-normal text-on-surface-variant">
+                    {formatBytes(f.size)}
+                  </span>
                 </span>
-                <span className="flex shrink-0 gap-2">
+                <span className="flex shrink-0 gap-1.5">
                   <button
                     onClick={() => onDownload(f.name)}
-                    className="rounded-md bg-emerald-600/80 px-2 py-0.5 text-xs text-white hover:bg-emerald-500"
+                    className="rounded-full bg-primary-container px-3 py-1 text-xs font-medium text-on-primary-container hover:opacity-90"
                   >
                     下载
                   </button>
                   <button
                     onClick={() => onDelete(f.name)}
-                    className="rounded-md bg-slate-700 px-2 py-0.5 text-xs text-slate-300 hover:bg-red-600/70"
+                    className="rounded-full bg-outline-soft px-3 py-1 text-xs font-medium text-on-surface-variant hover:opacity-90"
                   >
                     删除
                   </button>

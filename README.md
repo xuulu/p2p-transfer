@@ -10,8 +10,9 @@
 
 | 能力 | 实现要点 |
 | --- | --- |
+| 界面 | LocalSend 风格：接收/发送/设置三 Tab 底部导航 + Material 3 视觉（圆角卡片、主色按钮），支持跟随系统/浅色/深色主题 |
 | 设备发现 | `@trystero-p2p/torrent`（trystero 的 BitTorrent 传输）通过公共 WebSocket BitTorrent Tracker 组播信令；连接建立后为 WebRTC Mesh |
-| 在线设备 | `room.onPeerJoin / onPeerLeave` 维护设备表，`hello` action 交换设备名 |
+| 在线设备 | `room.onPeerJoin / onPeerLeave` 维护设备表，`hello` action 交换设备名；发送页多选目标设备 |
 | 文件传输 | 应用层按 **64KB** 分块，`file-chunk` action 逐块发送并 **`await` 每块的发送 Promise**（背压），对端按写链串行落盘 |
 | 传输进度 | 发送端按已发送字节、接收端按已收字节实时计算，界面 150ms 节流刷新 + 速度估算 |
 | 剪贴板同步 | 2s 轮询检测本机复制并广播；接收后写入本机；用「本地已见 / 已发送 / 远端已收」三个哈希状态防循环 |
@@ -52,11 +53,14 @@ p2p-transfer/
     │   ├── page.tsx          # 服务器组件，渲染客户端应用
     │   └── globals.css       # Tailwind 入口
     ├── components/
-    │   ├── transfer-app.tsx  # 主应用：房间 ID 解析、布局编排、链接分享
-    │   ├── peer-list.tsx     # 在线设备列表
-    │   ├── file-dropzone.tsx # 拖拽/点击选择文件
+    │   ├── transfer-app.tsx  # 应用外壳：房间 ID 解析、三 Tab 导航、主题管理
+    │   ├── receive-view.tsx  # 接收页：主卡片、房间信息、信令状态、传输/收件箱/剪贴板
+    │   ├── send-view.tsx     # 发送页：设备列表（多选）、选文件、拖拽投递
+    │   ├── settings-view.tsx # 设置页：设备名、主题、关于
+    │   ├── peer-list.tsx     # 在线设备胶囊行
     │   ├── transfer-list.tsx # 传输任务进度与 OPFS 收件箱
-    │   └── clipboard-panel.tsx # 剪贴板文本同步面板
+    │   ├── clipboard-panel.tsx # 剪贴板文本同步面板
+    │   └── icons.tsx         # 内联 Material 图标
     ├── hooks/
     │   └── use-room.ts       # trystero 房间生命周期 + 文件/剪贴板协议（全部在 useEffect 初始化）
     └── lib/

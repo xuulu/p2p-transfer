@@ -1,7 +1,64 @@
 @import "tailwindcss";
 
-/* 细滚动条，适配深色主题 */
+/* 暗色模式：class 策略（由应用内主题设置切换，而非仅跟随系统） */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---- Material 3 主题令牌（LocalSend 风格） ---- */
+:root {
+  color-scheme: light;
+  --m3-bg: #f7f2fa;
+  --m3-surface: #ffffff;
+  --m3-surface-2: #f3edf7;
+  --m3-primary: #6750a4;
+  --m3-on-primary: #ffffff;
+  --m3-primary-container: #eaddff;
+  --m3-on-primary-container: #21005d;
+  --m3-secondary: #49454f;
+  --m3-on-surface: #1d1b20;
+  --m3-on-surface-variant: #49454f;
+  --m3-outline: #79747e;
+  --m3-outline-soft: #e3dde8;
+  --m3-error: #b3261e;
+  --m3-scrim: rgba(29, 27, 32, 0.4);
+}
+
+.dark {
+  color-scheme: dark;
+  --m3-bg: #141218;
+  --m3-surface: #211f26;
+  --m3-surface-2: #2a2831;
+  --m3-primary: #d0bcff;
+  --m3-on-primary: #381e72;
+  --m3-primary-container: #4f378b;
+  --m3-on-primary-container: #eaddff;
+  --m3-secondary: #cac4d0;
+  --m3-on-surface: #e6e0e9;
+  --m3-on-surface-variant: #cac4d0;
+  --m3-outline: #938f99;
+  --m3-outline-soft: #49454f;
+  --m3-error: #f2b8b5;
+  --m3-scrim: rgba(0, 0, 0, 0.4);
+}
+
+@theme inline {
+  --color-bg: var(--m3-bg);
+  --color-surface: var(--m3-surface);
+  --color-surface2: var(--m3-surface-2);
+  --color-primary: var(--m3-primary);
+  --color-on-primary: var(--m3-on-primary);
+  --color-primary-container: var(--m3-primary-container);
+  --color-on-primary-container: var(--m3-on-primary-container);
+  --color-secondary: var(--m3-secondary);
+  --color-on-surface: var(--m3-on-surface);
+  --color-on-surface-variant: var(--m3-on-surface-variant);
+  --color-outline: var(--m3-outline);
+  --color-outline-soft: var(--m3-outline-soft);
+  --color-error: var(--m3-error);
+  --color-scrim: var(--m3-scrim);
+}
+
+/* 细滚动条 */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #334155 transparent;
+  scrollbar-color: var(--m3-outline) transparent;
 }

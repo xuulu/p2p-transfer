@@ -8,7 +8,10 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: '#020617',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#f7f2fa' },
+    { media: '(prefers-color-scheme: dark)', color: '#141218' },
+  ],
 }
 
 export default function RootLayout({
@@ -16,7 +19,13 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="zh-CN">
-      <body className="min-h-dvh bg-slate-950 text-slate-100 antialiased">
+      <body className="min-h-dvh bg-bg text-on-surface antialiased">
+        {/* 水合前先应用主题类，避免闪烁 */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('p2p-transfer-theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',d)}catch(e){}})();`,
+          }}
+        />
         {children}
       </body>
     </html>

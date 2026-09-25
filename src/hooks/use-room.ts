@@ -57,6 +57,7 @@ interface IncomingFile {
   status: 'opening' | 'active' | 'done' | 'error' | 'cancelled'
 }
 
+const DEVICE_NAME_KEY = 'p2p-transfer-device-name'
 const POLL_INTERVAL_MS = 2000
 
 export function useRoom(roomId: string) {
@@ -70,6 +71,7 @@ export function useRoom(roomId: string) {
   const [lastRemoteClipboard, setLastRemoteClipboard] = useState<string | null>(null)
   const [clipboardStatus, setClipboardStatus] = useState('')
   const [notice, setNotice] = useState('')
+  const [deviceName, setDeviceName] = useState<string | null>(null)
 
   const roomRef = useRef<Room | null>(null)
   const actionsRef = useRef<{
@@ -86,6 +88,7 @@ export function useRoom(roomId: string) {
   const speedTrackRef = useRef<Map<string, { bytes: number; ts: number }>>(new Map())
   const peersRef = useRef<Map<string, PeerInfo>>(new Map())
   const selfIdRef = useRef<string | null>(null)
+  const deviceNameRef = useRef<string | null>(null)
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const relayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -204,7 +207,9 @@ export function useRoom(roomId: string) {
             if (!next.has(peerId)) next.set(peerId, { id: peerId })
             return next
           })
-          hello.send(shortId(selfIdRef.current ?? '我', 8), { target: peerId })
+          hello.send(deviceNameRef.current || shortId(selfIdRef.current ?? '我', 8), {
+            target: peerId,
+          })
         }
         room.onPeerLeave = (peerId: string) => {
           setPeers((prev) => {
@@ -384,6 +389,12 @@ export function useRoom(roomId: string) {
   useEffect(() => {
     selfIdRef.current = selfId
   }, [selfId])
+  useEffect(() => {
+    deviceNameRef.current = deviceName
+  }, [deviceName])
+  useEffect(() => {
+    setDeviceName(localStorage.getItem(DEVICE_NAME_KEY))
+  }, [])
 
   // =============================================================
   // 文件发送：64KB 分块 + 逐块 await（背压）
@@ -439,8 +450,12 @@ export function useRoom(roomId: string) {
   }
 
   const sendFiles = useCallback(
-    (files: File[]) => {
-      const targets = [...peersRef.current.keys()]
+    (files: File[], targetIds?: string[]) => {
+      const all = [...peersRef.current.keys()]
+      const targets =
+        targetIds && targetIds.length > 0
+          ? all.filter((id) => targetIds.includes(id))
+          : all
       if (targets.length === 0) {
         showNotice('房间内暂无其他设备在线')
         return
@@ -527,6 +542,16 @@ export function useRoom(roomId: string) {
     }
   }, [broadcastClipboardText])
 
+  const saveDeviceName = useCallback((name: string) => {
+    const trimmed = name.trim().slice(0, 24)
+    localStorage.setItem(DEVICE_NAME_KEY, trimmed)
+    setDeviceName(trimmed)
+    const hello = actionsRef.current.hello
+    if (hello) {
+      for (const pid of peersRef.current.keys()) hello.send(trimmed, { target: pid })
+    }
+  }, [])
+
   // =============================================================
   // OPFS 收件箱
   // =============================================================
@@ -552,11 +577,13 @@ export function useRoom(roomId: string) {
     lastRemoteClipboard,
     clipboardStatus,
     notice,
+    deviceName,
     sendFiles,
     cancelFile,
     broadcastClipboardText,
     readClipboardAndBroadcast,
     downloadInboxFile,
     deleteInboxFile,
+    saveDeviceName,
   }
 }

@@ -94,14 +94,16 @@ export function TransferApp() {
         <h1 className="text-lg font-semibold tracking-tight">P2P 快传</h1>
         <div className="flex items-center gap-1">
           <span
-            title="信令连接状态"
+            title={room.reconnecting ? '信令重连中' : '信令连接状态'}
             className={
               'h-2.5 w-2.5 rounded-full ' +
               (room.status === 'error'
                 ? 'bg-error'
-                : room.status === 'joined' && relayOpen > 0
-                  ? 'bg-primary'
-                  : 'bg-outline')
+                : room.reconnecting
+                  ? 'bg-warning'
+                  : room.status === 'joined' && relayOpen > 0
+                    ? 'bg-primary'
+                    : 'bg-outline')
             }
           />
           <button

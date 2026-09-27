@@ -6,6 +6,15 @@
 /** 文件分块大小：64KB */
 export const CHUNK_SIZE = 64 * 1024
 
+// ---- 连接稳定性参数 ----
+/** 心跳间隔：前台 15s 一次；后台标签页被浏览器节流（约 1 次/分钟）时仍能工作，判断只看真实时间差 */
+export const HEARTBEAT_MS = 15_000
+/** 对端超过该时长无任何消息（含心跳回应）视为失联，从在线列表剔除（前台执行） */
+export const PEER_STALE_MS = 45_000
+/** 信令全断后的自动重连退避：指数增长，从 2s 到 30s 封顶 */
+export const REJOIN_BASE_MS = 2_000
+export const REJOIN_MAX_MS = 30_000
+
 /** trystero 应用命名空间：信令 swarm 按 appId + roomId 隔离，不同应用互不可见 */
 export const TRYSTERO_APP_ID = 'p2p-transfer-platform-v1'
 
@@ -53,6 +62,9 @@ export type TextMsg = {
 export type CancelMsg = {
   fileId: string
 }
+
+// action: 'ping' / 'pong' —— 心跳保活，payload 为发送方时间戳（number）。
+// 对端任何消息都会刷新其存活时间，超过 PEER_STALE_MS 无响应即视为失联。
 
 // ---- 工具函数 ----
 

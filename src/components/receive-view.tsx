@@ -54,9 +54,11 @@ export function ReceiveView({
                 ? 'bg-error/10 text-error'
                 : joining
                   ? 'bg-outline-soft text-on-surface-variant'
-                  : relayOpen > 0
-                    ? 'bg-primary-container text-on-primary-container'
-                    : 'bg-error/10 text-error')
+                  : room.reconnecting
+                    ? 'bg-warning-soft text-warning'
+                    : relayOpen > 0
+                      ? 'bg-primary-container text-on-primary-container'
+                      : 'bg-error/10 text-error')
             }
           >
             <span
@@ -66,20 +68,30 @@ export function ReceiveView({
                   ? 'bg-error'
                   : joining
                     ? 'bg-outline'
-                    : relayOpen > 0
-                      ? 'bg-primary'
-                      : 'bg-error')
+                    : room.reconnecting
+                      ? 'bg-warning'
+                      : relayOpen > 0
+                        ? 'bg-primary'
+                        : 'bg-error')
               }
             />
             {room.status === 'error'
               ? '连接失败'
               : joining
                 ? '信令连接中'
-                : relayOpen > 0
-                  ? `已连接 · 信令 ${relayOpen}/${relayTotal}`
-                  : '信令不可达'}
+                : room.reconnecting
+                  ? '重连中…'
+                  : relayOpen > 0
+                    ? `已连接 · 信令 ${relayOpen}/${relayTotal}`
+                    : '信令不可达'}
           </span>
         </div>
+
+        {room.reconnecting && (
+          <p className="mt-3 rounded-2xl bg-warning-soft px-3 py-2 text-xs leading-relaxed text-warning">
+            信令已断开，正在自动重连…（已建立的设备直连不受影响）
+          </p>
+        )}
 
         {room.status === 'joined' && relayTotal > 0 && relayOpen === 0 && (
           <p className="mt-3 rounded-2xl bg-error/10 px-3 py-2 text-xs leading-relaxed text-error">

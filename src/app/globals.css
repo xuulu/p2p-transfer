@@ -19,6 +19,8 @@
   --m3-outline: #79747e;
   --m3-outline-soft: #e3dde8;
   --m3-error: #b3261e;
+  --m3-warning: #8a4f00;
+  --m3-warning-soft: #ffdfb5;
   --m3-scrim: rgba(29, 27, 32, 0.4);
 }
 
@@ -37,6 +39,8 @@
   --m3-outline: #938f99;
   --m3-outline-soft: #49454f;
   --m3-error: #f2b8b5;
+  --m3-warning: #ffb95c;
+  --m3-warning-soft: #3e2e1f;
   --m3-scrim: rgba(0, 0, 0, 0.4);
 }
 
@@ -54,6 +58,8 @@
   --color-outline: var(--m3-outline);
   --color-outline-soft: var(--m3-outline-soft);
   --color-error: var(--m3-error);
+  --color-warning: var(--m3-warning);
+  --color-warning-soft: var(--m3-warning-soft);
   --color-scrim: var(--m3-scrim);
 }
 

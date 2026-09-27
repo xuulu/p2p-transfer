@@ -4,6 +4,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DataPayload, MessageAction, joinRoom } from '@trystero-p2p/torrent'
 import {
   CHUNK_SIZE,
+  HEARTBEAT_MS,
+  PEER_STALE_MS,
+  REJOIN_BASE_MS,
+  REJOIN_MAX_MS,
   TRACKER_URLS,
   TRYSTERO_APP_ID,
   shortId,
@@ -61,6 +65,12 @@ interface IncomingFile {
 }
 
 const TRACKERS_KEY = 'p2p-transfer-trackers'
+/** 首次从未连上信令时最多自动重试次数（之后交给网络/可见性事件与用户操作） */
+const INITIAL_FAIL_MAX_RETRY = 3
+
+type NavigatorWithWakeLock = Navigator & {
+  wakeLock?: { request: (type: 'screen') => Promise<WakeLockSentinel> }
+}
 
 export function useRoom(roomId: string) {
   const [status, setStatus] = useState<RoomStatus>('idle')
@@ -71,6 +81,8 @@ export function useRoom(roomId: string) {
   const [relays, setRelays] = useState<{ url: string; state: RelayState }[]>([])
   const [inboxFiles, setInboxFiles] = useState<OpfsFileInfo[]>([])
   const [notice, setNotice] = useState('')
+  /** 信令曾连上、现已全断且正在自动重连 */
+  const [reconnecting, setReconnecting] = useState(false)
   // 运行时信令列表：优先取设置页保存的自定义列表，否则用构建期默认
   const [trackers, setTrackers] = useState<string[]>(TRACKER_URLS ?? [])
 
@@ -81,7 +93,9 @@ export function useRoom(roomId: string) {
     fileCancel: Action | null
     text: Action | null
     hello: Action | null
-  }>({ fileMeta: null, fileChunk: null, fileCancel: null, text: null, hello: null })
+    ping: Action | null
+    pong: Action | null
+  }>({ fileMeta: null, fileChunk: null, fileCancel: null, text: null, hello: null, ping: null, pong: null })
   const transfersRef = useRef<Map<string, Transfer>>(new Map())
   const incomingRef = useRef<Map<string, IncomingFile>>(new Map())
   const cancelFlagsRef = useRef<Map<string, boolean>>(new Map())
@@ -91,8 +105,27 @@ export function useRoom(roomId: string) {
   const selfIdRef = useRef<string | null>(null)
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const relayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const hbTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const cancelIncomingRef = useRef<(fileId: string) => Promise<void>>(async () => {})
   const inboxDirtyRef = useRef(false)
+
+  // ---- 稳定性相关 ref ----
+  /** 对端最后一次收到消息（含心跳）的时间戳，用于失联剪枝 */
+  const lastSeenRef = useRef<Map<string, number>>(new Map())
+  /** 信令是否曾成功连上（区分「中途断线」与「从未连通」） */
+  const hadRelayRef = useRef(false)
+  /** 自动重连退避状态 */
+  const reconnectStateRef = useRef<{ attempts: number; lastTry: number }>({ attempts: 0, lastTry: 0 })
+  /** 首次未连上时的重试计数（封顶，避免无网时死循环） */
+  const initialFailRef = useRef(0)
+  /** 当前房间模块的信令查询函数，会话重建后仍指向最新实现 */
+  const getRelaySocketsRef = useRef<() => Record<string, WebSocket>>(() => ({}))
+  /** 供全局事件（可见性/网络）调用的连接检查入口 */
+  const checkRef = useRef<() => void>(() => {})
+  const heartbeatRef = useRef<() => void>(() => {})
+  /** Wake Lock：传输进行中防止移动端锁屏/切后台挂起 */
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null)
+  const activeTransferRef = useRef(0)
 
   // ---- 节流状态刷新 ----
   const flushTransfers = useCallback(() => {
@@ -135,6 +168,34 @@ export function useRoom(roomId: string) {
     }, 5000)
   }, [])
 
+  // ---- Wake Lock（屏幕常亮，传输中防止移动端切后台挂起） ----
+  const acquireWakeLock = useCallback(async () => {
+    try {
+      const nav = navigator as NavigatorWithWakeLock
+      if (!nav.wakeLock || wakeLockRef.current) return
+      const sentinel = await nav.wakeLock.request('screen')
+      wakeLockRef.current = sentinel
+      sentinel.addEventListener('release', () => {
+        wakeLockRef.current = null
+      })
+    } catch {
+      /* 非安全上下文或用户拒绝时静默 */
+    }
+  }, [])
+
+  const releaseWakeLock = useCallback(() => {
+    void wakeLockRef.current?.release().catch(() => {})
+    wakeLockRef.current = null
+  }, [])
+
+  useEffect(() => {
+    const n = transfers.filter((t) => t.status === 'active').length
+    const prev = activeTransferRef.current
+    if (n > 0 && prev === 0) void acquireWakeLock()
+    if (n === 0 && prev > 0) releaseWakeLock()
+    activeTransferRef.current = n
+  }, [transfers, acquireWakeLock, releaseWakeLock])
+
   // 读取设置页保存的自定义信令列表
   useEffect(() => {
     try {
@@ -153,97 +214,154 @@ export function useRoom(roomId: string) {
 
   // =============================================================
   // 房间生命周期（全部浏览器 API 在 useEffect 中初始化）
-  // 信令列表变化（保存自定义列表）时自动离开并重连
+  // - 信令列表变化（保存自定义列表）时自动离开并重连
+  // - 信令断线时按指数退避自动重建房间
+  // - 心跳（ping/pong）检测失联对端并剪枝
   // =============================================================
   useEffect(() => {
-    let cancelled = false
-    let room: Room | null = null
+    let sessionActive = true
 
-    setStatus('joining')
-    setErrorMsg('')
+    const clearTimers = () => {
+      if (relayTimerRef.current) {
+        clearInterval(relayTimerRef.current)
+        relayTimerRef.current = null
+      }
+      if (hbTimerRef.current) {
+        clearInterval(hbTimerRef.current)
+        hbTimerRef.current = null
+      }
+    }
 
-    void import('@trystero-p2p/torrent')
-      .then((mod) => {
-        if (cancelled) return
-        const { joinRoom, selfId, getRelaySockets } = mod
-        setSelfId(selfId)
+    /** 收到对端任何消息都刷新其存活时间；未知对端自动补进列表 */
+    const touchPeer = (peerId: string) => {
+      lastSeenRef.current.set(peerId, Date.now())
+      if (!peersRef.current.has(peerId)) {
+        peersRef.current.set(peerId, { id: peerId })
+        setPeers(new Map(peersRef.current))
+      }
+    }
 
-        const config: Parameters<typeof joinRoom>[0] = {
+    /** 移除对端并终止其活动传输 */
+    const dropPeer = (peerId: string, reason: string) => {
+      lastSeenRef.current.delete(peerId)
+      peersRef.current.delete(peerId)
+      setPeers(new Map(peersRef.current))
+      let changed = false
+      for (const t of transfersRef.current.values()) {
+        if (t.peerId === peerId && t.status === 'active') {
+          transfersRef.current.set(t.fileId, { ...t, status: 'error', error: reason })
+          changed = true
+        }
+      }
+      if (changed) flushTransfers()
+    }
+
+    /** 建立（或重建）房间会话：断开旧房间 → 加入新房间 → 挂载全部 handlers 与定时器 */
+    const createRoomSession = async () => {
+      if (!sessionActive) return
+      clearTimers()
+      if (roomRef.current) {
+        try {
+          roomRef.current.leave()
+        } catch {
+          /* ignore */
+        }
+        roomRef.current = null
+      }
+      // 旧连接作废：清空设备表，标记活动传输中断
+      peersRef.current.clear()
+      lastSeenRef.current.clear()
+      setPeers(new Map())
+      for (const t of transfersRef.current.values()) {
+        if (t.status === 'active') {
+          transfersRef.current.set(t.fileId, { ...t, status: 'error', error: '连接已重建' })
+        }
+      }
+      flushTransfers()
+      setStatus('joining')
+      setErrorMsg('')
+      setRelays([])
+
+      try {
+        const mod = await import('@trystero-p2p/torrent')
+        if (!sessionActive) return
+        const { joinRoom: jr, selfId: sid, getRelaySockets } = mod
+        getRelaySocketsRef.current = (getRelaySockets ?? (() => ({}))) as () => Record<string, WebSocket>
+        setSelfId(sid)
+        selfIdRef.current = sid
+
+        const config: Parameters<typeof jr>[0] = {
           appId: TRYSTERO_APP_ID,
           relayConfig: trackers.length > 0 ? { urls: trackers } : {},
         }
-        room = joinRoom(config, roomId, {
+        const r = jr(config, roomId, {
           onJoinError: (details) => {
-            if (cancelled) return
-            const hint = /turn/i.test(details.error) ? '（可配置 TURN 穿透）' : '（双方需同一网络或配置 TURN）'
+            if (!sessionActive) return
+            const hint = /turn/i.test(details.error)
+              ? '（可配置 TURN 穿透）'
+              : '（双方需同一网络或配置 TURN）'
             showNotice(`与设备 ${shortId(details.peerId, 8)} 连接失败：${details.error}${hint}`)
           },
         })
-        roomRef.current = room
+        roomRef.current = r
         setStatus('joined')
 
-        // ---------- 信令（Tracker）连接状态 ----------
-        const refreshRelays = () => {
-          try {
-            const sockets = (getRelaySockets?.() ?? {}) as Record<string, WebSocket>
-            setRelays(
-              Object.entries(sockets).map(([url, ws]) => ({
-                url,
-                state:
-                  ws.readyState === WebSocket.OPEN
-                    ? 'open'
-                    : ws.readyState === WebSocket.CONNECTING
-                      ? 'connecting'
-                      : 'closed',
-              })),
-            )
-          } catch {
-            setRelays([])
-          }
-        }
-        refreshRelays()
-        relayTimerRef.current = setInterval(refreshRelays, 3000)
-
         // ---------- actions ----------
-        const hello = room.makeAction<string>('hello')
-        const text = room.makeAction<TextMsg>('text')
-        const fileMeta = room.makeAction<FileMeta>('file-meta')
-        const fileChunk = room.makeAction<DataPayload>('file-chunk')
-        const fileCancel = room.makeAction<CancelMsg>('file-cancel')
-        actionsRef.current = { fileMeta, fileChunk, fileCancel, text, hello }
+        const hello = r.makeAction<string>('hello')
+        const text = r.makeAction<TextMsg>('text')
+        const fileMeta = r.makeAction<FileMeta>('file-meta')
+        const fileChunk = r.makeAction<DataPayload>('file-chunk')
+        const fileCancel = r.makeAction<CancelMsg>('file-cancel')
+        const ping = r.makeAction<number>('ping')
+        const pong = r.makeAction<number>('pong')
+        actionsRef.current = { fileMeta, fileChunk, fileCancel, text, hello, ping, pong }
 
         // ---------- 在线设备 ----------
-        room.onPeerJoin = (peerId: string) => {
-          setPeers((prev) => {
-            const next = new Map(prev)
-            if (!next.has(peerId)) next.set(peerId, { id: peerId })
-            return next
-          })
+        r.onPeerJoin = (peerId: string) => {
+          touchPeer(peerId)
           hello.send(shortId(selfIdRef.current ?? '我', 8), { target: peerId })
         }
-        room.onPeerLeave = (peerId: string) => {
-          setPeers((prev) => {
-            const next = new Map(prev)
-            next.delete(peerId)
-            return next
-          })
-          for (const t of transfersRef.current.values()) {
-            if (t.peerId === peerId && t.status === 'active') {
-              transfersRef.current.set(t.fileId, { ...t, status: 'error', error: '对端已离线' })
+        r.onPeerLeave = (peerId: string) => dropPeer(peerId, '对端已离线')
+        hello.onMessage = (name, { peerId }) => {
+          touchPeer(peerId)
+          peersRef.current.set(peerId, { id: peerId, name })
+          setPeers(new Map(peersRef.current))
+        }
+
+        // ---------- 心跳保活：ping → 对端回 pong；静默超时即剪枝 ----------
+        ping.onMessage = (_ts, { peerId }) => {
+          touchPeer(peerId)
+          try {
+            pong.send(Date.now(), { target: peerId })
+          } catch {
+            /* ignore */
+          }
+        }
+        pong.onMessage = (_ts, { peerId }) => touchPeer(peerId)
+
+        const heartbeat = () => {
+          const now = Date.now()
+          for (const id of peersRef.current.keys()) {
+            try {
+              ping.send(now, { target: id })
+            } catch {
+              /* ignore */
             }
           }
-          flushTransfers()
+          // 后台标签页的定时器会被浏览器节流（最低 1 次/分钟），
+          // 剪枝只看真实时间差且仅在前台执行，避免误杀仍活着的对端
+          if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+          const stale: string[] = []
+          for (const [id, last] of lastSeenRef.current) {
+            if (now - last > PEER_STALE_MS && peersRef.current.has(id)) stale.push(id)
+          }
+          for (const id of stale) dropPeer(id, '对端长时间无响应，已离线')
         }
-        hello.onMessage = (name, { peerId }) => {
-          setPeers((prev) => {
-            const next = new Map(prev)
-            next.set(peerId, { id: peerId, name })
-            return next
-          })
-        }
+        heartbeatRef.current = heartbeat
 
         // ---------- 文本接收：记入传输列表（可复制） ----------
         text.onMessage = (data, { peerId }) => {
+          touchPeer(peerId)
           const fileId = `text-${data.ts}-${peerId}`
           if (transfersRef.current.has(fileId)) return
           transfersRef.current.set(fileId, {
@@ -337,10 +455,12 @@ export function useRoom(roomId: string) {
         cancelIncomingRef.current = cancelIncomingLocal
 
         fileMeta.onMessage = (meta, { peerId }) => {
+          touchPeer(peerId)
           void startIncoming(meta, peerId)
         }
 
-        fileChunk.onMessage = (data, { metadata }) => {
+        fileChunk.onMessage = (data, { peerId, metadata }) => {
+          touchPeer(peerId)
           const meta = metadata as unknown as ChunkMeta
           const inc = incomingRef.current.get(meta.fileId)
           if (!inc) return
@@ -356,27 +476,143 @@ export function useRoom(roomId: string) {
           if (inc.received >= inc.meta.size) void finishIncoming(inc)
         }
 
-        fileCancel.onMessage = ({ fileId }) => {
+        fileCancel.onMessage = ({ fileId }, { peerId }) => {
+          touchPeer(peerId)
           void cancelIncomingLocal(fileId)
         }
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
+      } catch (err: unknown) {
+        if (!sessionActive) return
         setStatus('error')
         setErrorMsg(String(err))
-      })
+      }
+    }
+
+    // ---------- 信令状态轮询 + 自动重连 ----------
+    // 要点：WebRTC Mesh 建立后不依赖 Tracker，只要还有存活对端就不重建；
+    // 仅当信令全断且设备列表已失效时才按指数退避重建房间。
+    const refreshRelays = () => {
+      let sockets: Record<string, WebSocket> = {}
+      try {
+        sockets = getRelaySocketsRef.current()
+      } catch {
+        sockets = {}
+      }
+      const entries = Object.entries(sockets)
+      setRelays(
+        entries.map(([url, ws]) => ({
+          url,
+          state:
+            ws.readyState === WebSocket.OPEN
+              ? 'open'
+              : ws.readyState === WebSocket.CONNECTING
+                ? 'connecting'
+                : 'closed',
+        })),
+      )
+      const anyOpen = entries.some(([, ws]) => ws.readyState === WebSocket.OPEN)
+      const anyConnecting = entries.some(([, ws]) => ws.readyState === WebSocket.CONNECTING)
+      if (anyOpen) {
+        hadRelayRef.current = true
+        initialFailRef.current = 0
+        reconnectStateRef.current = { attempts: 0, lastTry: 0 }
+        setReconnecting(false)
+        return
+      }
+      if (anyConnecting) return // trystero 内部可能正在重连，先等待
+      // 仍有存活对端（心跳未超时）→ Mesh 直连不受影响，不重建
+      const now = Date.now()
+      const livePeers = [...peersRef.current.keys()].filter(
+        (id) => now - (lastSeenRef.current.get(id) ?? 0) <= PEER_STALE_MS,
+      ).length
+      if (livePeers > 0) return
+
+      const { attempts, lastTry } = reconnectStateRef.current
+      const backoff = Math.min(REJOIN_MAX_MS, REJOIN_BASE_MS * 2 ** attempts)
+      if (now - lastTry < backoff) return
+      reconnectStateRef.current = { attempts: attempts + 1, lastTry: now }
+
+      if (hadRelayRef.current) {
+        // 中途断线：不限次数
+        setReconnecting(true)
+        showNotice('信令连接已断开，正在自动重连…')
+      } else {
+        // 首次从未连通：封顶重试，避免无网络时死循环
+        if (initialFailRef.current >= INITIAL_FAIL_MAX_RETRY) return
+        initialFailRef.current++
+        setReconnecting(true)
+        showNotice('信令尚未连通，正在自动重试…')
+      }
+      void createRoomSession()
+    }
+    checkRef.current = refreshRelays
+
+    relayTimerRef.current = setInterval(refreshRelays, 3000)
+    void createRoomSession()
 
     return () => {
-      cancelled = true
-      if (relayTimerRef.current) {
-        clearInterval(relayTimerRef.current)
-        relayTimerRef.current = null
+      sessionActive = false
+      clearTimers()
+      if (roomRef.current) {
+        try {
+          roomRef.current.leave()
+        } catch {
+          /* ignore */
+        }
+        roomRef.current = null
       }
-      if (room) room.leave()
-      roomRef.current = null
-      actionsRef.current = { fileMeta: null, fileChunk: null, fileCancel: null, text: null, hello: null }
+      actionsRef.current = {
+        fileMeta: null,
+        fileChunk: null,
+        fileCancel: null,
+        text: null,
+        hello: null,
+        ping: null,
+        pong: null,
+      }
+      releaseWakeLock()
     }
-  }, [roomId, trackers, flushTransfers, updateTransfer, showNotice])
+  }, [roomId, trackers, flushTransfers, updateTransfer, showNotice, releaseWakeLock])
+
+  // =============================================================
+  // 全局恢复事件：切回标签页 / 网络恢复 / 移动网络切换 / bfcache 恢复
+  // =============================================================
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      heartbeatRef.current()
+      checkRef.current()
+      if (activeTransferRef.current > 0) void acquireWakeLock()
+    }
+    const onOnline = () => {
+      showNotice('网络已恢复，正在检查连接…')
+      checkRef.current()
+    }
+    const onOffline = () => showNotice('网络已断开')
+    const onPageShow = () => {
+      heartbeatRef.current()
+      checkRef.current()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('online', onOnline)
+    window.addEventListener('offline', onOffline)
+    window.addEventListener('pageshow', onPageShow)
+    const conn = (
+      navigator as NavigatorWithWakeLock & {
+        connection?: {
+          addEventListener: (t: string, cb: () => void) => void
+          removeEventListener: (t: string, cb: () => void) => void
+        }
+      }
+    ).connection
+    conn?.addEventListener?.('change', onOnline)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('offline', onOffline)
+      window.removeEventListener('pageshow', onPageShow)
+      conn?.removeEventListener?.('change', onOnline)
+    }
+  }, [showNotice, acquireWakeLock])
 
   // ---- ref 同步 ----
   useEffect(() => {
@@ -580,6 +816,7 @@ export function useRoom(roomId: string) {
     relays,
     inboxFiles,
     notice,
+    reconnecting,
     trackers,
     sendFiles,
     sendText,

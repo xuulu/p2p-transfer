@@ -118,8 +118,11 @@ export function SettingsView({
       {/* 关于 */}
       <section className="rounded-[28px] bg-surface px-5 py-5 text-xs leading-relaxed text-on-surface-variant shadow-sm">
         <h2 className="mb-2 text-sm font-medium text-on-surface">关于</h2>
-        <p>P2P 快传 · v1.2.0</p>
+        <p>P2P 快传 · v1.3.0</p>
         <p className="mt-1">WebRTC Mesh 直连，数据不经过服务器，需 HTTPS 安全上下文。</p>
+        <p className="mt-1">
+          连接稳定性：心跳保活 + 失联剔除、信令断线自动重连（指数退避）、切回页面/网络恢复自动检查、传输中屏幕常亮。
+        </p>
         <p className="mt-1">
           开源地址：
           <a

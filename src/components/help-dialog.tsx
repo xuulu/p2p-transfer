@@ -39,6 +39,9 @@ export function HelpDialog({ open, onClose }: { open: boolean; onClose: () => vo
               连接不上时，到「设置」页检查信令服务器：国内网络建议填自己的反代地址（如
               wss://send.qvqa.cn/tracker/…），保存后会自动重连。
             </li>
+            <li>
+              切换标签页或手机切后台再回来，会自动心跳检测并恢复连接；信令断开会自动重连，已建立的设备直连不受影响。
+            </li>
           </ol>
         </section>
 

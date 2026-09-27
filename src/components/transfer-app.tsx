@@ -29,9 +29,12 @@ export function TransferApp() {
   const [helpOpen, setHelpOpen] = useState(false)
   const [toast, setToast] = useState('')
 
-  // SSR：任意房间路径由 server.js 重写到首页，这里从 pathname 恢复房间 ID
+  // 静态托管把所有路径重写到 index.html（GitHub Pages 走 404.html 暂存），这里恢复房间 ID
   useEffect(() => {
     let id = roomIdFromPath(window.location.pathname)
+    const gh = sessionStorage.getItem('gh-pages-redirect')
+    sessionStorage.removeItem('gh-pages-redirect')
+    if (gh && gh !== '/' && gh !== '') id = gh
     if (!ROOM_PATTERN.test(id)) id = DEFAULT_ROOM
     setRoomId(id)
     try {
@@ -136,9 +139,7 @@ export function TransferApp() {
             roomId={roomId}
             onCopyLink={() => void copyRoomLink()}
             onCreateRoom={createNewRoom}
-            choice={room.choice}
             trackers={room.trackers}
-            onSelectTracker={room.selectTracker}
             onSaveTrackers={room.saveTrackers}
             theme={theme}
             onThemeChange={setTheme}

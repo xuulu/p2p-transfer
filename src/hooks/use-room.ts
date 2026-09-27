@@ -1,25 +1,19 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DataPayload, MessageAction, joinRoom } from '@trystero-p2p/torrent'
+import type { DataPayload, MessageAction, joinRoom } from '@trystero-p2p/mqtt'
 import {
-  AUTO_MQTT_URLS,
   CHUNK_SIZE,
+  DEFAULT_SIGNAL_URLS,
   HEARTBEAT_MS,
   PEER_STALE_MS,
   REJOIN_BASE_MS,
   REJOIN_MAX_MS,
-  TRACKER_CHOICE_CUSTOM,
-  TRACKER_CHOICE_DEFAULT,
-  TRACKER_CHOICE_KEY,
-  TRACKER_CHOICE_MQTT_DEFAULT,
-  TRACKER_PRESETS,
-  TRACKER_URLS,
+  TRACKERS_KEY,
   TRYSTERO_APP_ID,
-  resolveTrackerList,
+  resolveSignalList,
   shortId,
 } from '@/lib/protocol'
-import type { SignalMode } from '@/lib/protocol'
 import type { CancelMsg, ChunkMeta, FileMeta, TextMsg } from '@/lib/protocol'
 import {
   downloadOpfsFile,
@@ -72,7 +66,6 @@ interface IncomingFile {
   status: 'opening' | 'active' | 'done' | 'error' | 'cancelled'
 }
 
-const TRACKERS_KEY = 'p2p-transfer-trackers'
 /** 首次从未连上信令时最多自动重试次数（之后交给网络/可见性事件与用户操作） */
 const INITIAL_FAIL_MAX_RETRY = 3
 
@@ -91,14 +84,10 @@ export function useRoom(roomId: string) {
   const [notice, setNotice] = useState('')
   /** 信令曾连上、现已全断且正在自动重连 */
   const [reconnecting, setReconnecting] = useState(false)
-  /** 当前信令选择：__mqtt（自动，默认）/ __default（备用 Tracker）/ 预设 id / custom */
-  const [choice, setChoice] = useState<string>(TRACKER_CHOICE_MQTT_DEFAULT)
-  /** 当前信令模式：torrent（BitTorrent Tracker）或 mqtt（公共 MQTT broker） */
-  const [signalMode, setSignalMode] = useState<SignalMode>('mqtt')
-  /** 自定义信令列表（设置页 textarea 保存的原始值） */
+  /** 自定义信令列表（设置页 textarea 保存的原始值，一行一个） */
   const [customTrackers, setCustomTrackers] = useState<string[]>([])
-  // 运行时信令列表：由选择项 + 自定义列表解析得出
-  const [trackers, setTrackers] = useState<string[]>(AUTO_MQTT_URLS)
+  // 运行时信令列表：自定义非空时用自定义，否则默认 5 个公共 broker
+  const [trackers, setTrackers] = useState<string[]>(DEFAULT_SIGNAL_URLS)
 
   const roomRef = useRef<Room | null>(null)
   const actionsRef = useRef<{
@@ -214,18 +203,8 @@ export function useRoom(roomId: string) {
 
   // 读取设置页保存的信令选择（选择项 + 自定义列表），旧值平滑迁移到「自动 MQTT」
   useEffect(() => {
-    let c = TRACKER_CHOICE_MQTT_DEFAULT
     let custom: string[] = []
     try {
-      const storedChoice = localStorage.getItem(TRACKER_CHOICE_KEY)
-      if (storedChoice) {
-        // 旧版默认/已失效预设统一迁移到自动 MQTT；自定义与 MQTT 相关选择保持尊重
-        const known =
-          storedChoice === TRACKER_CHOICE_MQTT_DEFAULT ||
-          storedChoice === TRACKER_CHOICE_CUSTOM ||
-          TRACKER_PRESETS.some((p) => p.id === storedChoice && p.mode === 'mqtt')
-        if (known) c = storedChoice
-      }
       const raw = localStorage.getItem(TRACKERS_KEY)
       if (raw) {
         custom = raw
@@ -236,19 +215,9 @@ export function useRoom(roomId: string) {
     } catch {
       /* ignore */
     }
-    const resolved = resolveTrackerList(c, custom)
-    if (c !== TRACKER_CHOICE_MQTT_DEFAULT) {
-      try {
-        localStorage.setItem(TRACKER_CHOICE_KEY, c)
-      } catch {
-        /* ignore */
-      }
-    }
-    setChoice(c)
-    setSignalMode(resolved.mode)
     setCustomTrackers(custom)
     customTrackersRef.current = custom
-    setTrackers(resolved.list)
+    setTrackers(resolveSignalList(custom))
   }, [])
 
   // =============================================================
@@ -322,27 +291,16 @@ export function useRoom(roomId: string) {
       setRelays([])
 
       try {
-        // 按信令模式动态加载策略：torrent（BitTorrent Tracker）/ mqtt（公共 MQTT broker）
-        // 两策略的 joinRoom/selfId/getRelaySockets API 同构，统一按 torrent 模块签名使用
-        const mod = (await import(
-          signalMode === 'mqtt' ? '@trystero-p2p/mqtt' : '@trystero-p2p/torrent'
-        )) as typeof import('@trystero-p2p/torrent')
+        const { joinRoom: jr, selfId: sid, getRelaySockets } = await import('@trystero-p2p/mqtt')
         if (!sessionActive) return
-        const { joinRoom: jr, selfId: sid, getRelaySockets } = mod
         getRelaySocketsRef.current = (getRelaySockets ?? (() => ({}))) as () => Record<string, WebSocket>
         setSelfId(sid)
         selfIdRef.current = sid
 
         const config: Parameters<typeof jr>[0] = {
           appId: TRYSTERO_APP_ID,
-          // MQTT 默认组合直接用 trystero 内置 5 个公共 broker（含冗余）；
-          // 其余情况显式给出节点列表
-          relayConfig:
-            signalMode === 'mqtt' && choice === TRACKER_CHOICE_MQTT_DEFAULT
-              ? {}
-              : trackers.length > 0
-                ? { urls: trackers }
-                : {},
+          // 一行一个的自定义信令列表（或默认 5 个公共 broker），多节点并行冗余
+          relayConfig: trackers.length > 0 ? { urls: trackers } : {},
         }
         const r = jr(config, roomId, {
           onJoinError: (details) => {
@@ -621,7 +579,7 @@ export function useRoom(roomId: string) {
       }
       releaseWakeLock()
     }
-  }, [roomId, trackers, signalMode, choice, flushTransfers, updateTransfer, showNotice, releaseWakeLock])
+  }, [roomId, trackers, flushTransfers, updateTransfer, showNotice, releaseWakeLock])
 
   // =============================================================
   // 全局恢复事件：切回标签页 / 网络恢复 / 移动网络切换 / bfcache 恢复
@@ -840,47 +798,21 @@ export function useRoom(roomId: string) {
   }, [])
 
   // =============================================================
-  // 信令选择设置
-  // - selectTracker：下拉框选择预设（__default / 预设 id / custom），持久化并重连
-  // - saveTrackers：自定义列表保存（同时把选择项置为 custom），持久化并重连
+  // 信令列表设置（一行一个，localStorage 持久化）
+  // - saveTrackers：保存自定义列表（清空 = 恢复默认），持久化并自动重连
   // =============================================================
-  const selectTracker = useCallback(
-    (id: string) => {
-      try {
-        localStorage.setItem(TRACKER_CHOICE_KEY, id)
-      } catch {
-        /* ignore */
-      }
-      const resolved = resolveTrackerList(id, customTrackersRef.current)
-      setChoice(id)
-      setSignalMode(resolved.mode)
-      setTrackers(resolved.list)
-      showNotice(
-        id === TRACKER_CHOICE_DEFAULT
-          ? '已恢复默认信令，正在重新连接…'
-          : id === TRACKER_CHOICE_MQTT_DEFAULT
-            ? '已切换 MQTT 信令，正在重新连接…（对方设备也需选同一项）'
-            : '已切换信令，正在重新连接…（对方设备也需选同一项）',
-      )
-    },
-    [showNotice],
-  )
-
   const saveTrackers = useCallback(
     (list: string[]) => {
       const clean = list.map((s) => s.trim()).filter(Boolean)
       try {
         if (clean.length === 0) localStorage.removeItem(TRACKERS_KEY)
         else localStorage.setItem(TRACKERS_KEY, clean.join('\n'))
-        localStorage.setItem(TRACKER_CHOICE_KEY, TRACKER_CHOICE_CUSTOM)
       } catch {
         /* ignore */
       }
       setCustomTrackers(clean)
       customTrackersRef.current = clean
-      setChoice(TRACKER_CHOICE_CUSTOM)
-      setSignalMode('torrent')
-      setTrackers(clean.length > 0 ? clean : TRACKER_URLS ?? [])
+      setTrackers(resolveSignalList(clean))
       showNotice(clean.length > 0 ? '已保存，正在重新连接信令…' : '已恢复默认信令，正在重新连接…')
     },
     [showNotice],
@@ -896,15 +828,12 @@ export function useRoom(roomId: string) {
     inboxFiles,
     notice,
     reconnecting,
-    choice,
-    signalMode,
     trackers,
     sendFiles,
     sendText,
     cancelFile,
     downloadInboxFile,
     deleteInboxFile,
-    selectTracker,
     saveTrackers,
   }
 }

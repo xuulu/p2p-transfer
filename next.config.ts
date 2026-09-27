@@ -1,13 +1,14 @@
 import type { NextConfig } from 'next'
 
 /**
- * Next.js 自托管（SSR）：
- * - 生产用 custom server（server.js）运行：NODE_ENV=production node server.js
- * - 任意房间路径由 server.js 重写到首页，客户端在 useEffect 中通过
- *   window.location.pathname 恢复房间 ID
- * - WebSocket 信令反代（/mqtt-*、/tracker/*）内置在 server.js，无需 Nginx 反代配置
+ * 纯静态导出：
+ * - output: 'export' 将整个应用预渲染为 out/ 下的静态文件（无 Node 运行时）
+ * - 所有路由（/任意房间ID）由静态托管层重写到 index.html（public/_redirects）
+ * - GitHub Pages 用 public/404.html 兜底暂存房间 ID
+ * - 客户端在 useEffect 中通过 window.location.pathname 恢复房间 ID
  */
 const nextConfig: NextConfig = {
+  output: 'export',
   trailingSlash: false,
   images: { unoptimized: true },
 }

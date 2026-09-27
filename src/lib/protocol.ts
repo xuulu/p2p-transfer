@@ -19,49 +19,17 @@ export const REJOIN_MAX_MS = 30_000
 export const TRYSTERO_APP_ID = 'p2p-transfer-platform-v1'
 
 /**
- * 自托管信令反代（SSR 服务器 server.js 内置，无需 Nginx 反代）：
- * - SELF_RELAY_MQTT：自家域名 → EMQX 公共 broker（MQTT 模式，自动默认首选）
- * - SELF_RELAY_TRACKER：自家域名 → webtorrent.dev 公共 tracker（Tracker 模式，默认首选）
- * 构建时可用 NEXT_PUBLIC_SELF_RELAY 覆盖 MQTT 反代地址（换域名时使用）。
- */
-export const SELF_RELAY_MQTT = process.env.NEXT_PUBLIC_SELF_RELAY ?? 'wss://send.qvqa.cn/mqtt-emqx'
-export const SELF_RELAY_TRACKER = 'wss://send.qvqa.cn/tracker/webtorrent-dev/'
-
-/**
- * 公共 BitTorrent Tracker 列表（默认自家反代优先 + 实测在线的公共节点兜底）。
- * 2026-09 实测：公共 wss Tracker 生态很小，仅 webtorrent.dev / openwebtorrent.com 存活。
- * 构建时可用 NEXT_PUBLIC_TRACKERS 环境变量覆盖整个列表。
- */
-export const TRACKER_URLS: string[] | undefined = process.env.NEXT_PUBLIC_TRACKERS
-  ? process.env.NEXT_PUBLIC_TRACKERS.split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
-  : [SELF_RELAY_TRACKER, 'wss://tracker.webtorrent.dev', 'wss://tracker.openwebtorrent.com']
-
-/**
- * 信令模式与节点预设（设置页）。
+ * 信令模型：一行一个服务器地址（设置页 textarea，localStorage 持久化）。
  *
- * 2026-09 实测结论（30+ 候选逐一 WebSocket 握手）：
- * - Tracker 信令：公共 wss BitTorrent Tracker 生态很小，仅 webtorrent.dev /
- *   openwebtorrent.com 存活，其余候选（fastcast / gbitt / nanoha / moeking /
- *   opentrackr / tamers 等）均已失效，故不再纳入预设。
- * - MQTT 信令（trystero 另一策略）：用公共 MQTT broker 交换信令，同样无服务器；
- *   公共 broker 冗余多、国内可达性好（EMQX 为国内公司），推荐国内网络使用。
- * - SSR 部署后自动模式「自家反代优先 + 公共节点兜底」，见 server.js。
- *   双方设备必须选择同一信令方式与节点才能互通。
+ * - 默认内置 trystero mqtt 策略的 5 个公共 broker（多节点并行冗余，任一可达即完成信令）
+ * - 自定义列表（一行一个 wss:// 地址）非空时整体生效；清空保存 = 恢复默认
+ * - 2026-09 实测：公共 wss BitTorrent Tracker 生态仅 webtorrent.dev / openwebtorrent.com
+ *   存活，其余候选均失效；公共 MQTT broker 冗余多、可达性好，故默认使用 MQTT 信令。
+ * - 注意：PeerJS 的信令服务器（0.peerjs.com 等）协议与 trystero 不兼容，无法使用；
+ *   GitHub 仓库地址也不是信令服务器。自定义列表请填 trystero 可用的公共 MQTT broker。
+ * - 双方设备需使用同一信令列表才能互通（不同列表 = 不同信令网络）。
  */
-export type SignalMode = 'torrent' | 'mqtt'
-
-export interface TrackerPreset {
-  id: string
-  name: string
-  url: string
-  mode: SignalMode
-  note?: string
-}
-
-/** trystero mqtt 策略内置的公共 broker（含冗余） */
-export const MQTT_DEFAULT_URLS = [
+export const DEFAULT_SIGNAL_URLS = [
   'wss://test.mosquitto.org:8081/mqtt',
   'wss://broker.emqx.io:8084/mqtt',
   'wss://public:public@public.cloud.shiftr.io',
@@ -69,106 +37,16 @@ export const MQTT_DEFAULT_URLS = [
   'wss://broker.hivemq.com:8884/mqtt',
 ]
 
-/** 自动（MQTT）模式节点：自家反代优先 + 公共 5 broker 兜底 */
-export const AUTO_MQTT_URLS = [SELF_RELAY_MQTT, ...MQTT_DEFAULT_URLS]
-
-export const TRACKER_PRESETS: TrackerPreset[] = [
-  // ---- MQTT 信令（推荐 · 国内可达性好） ----
-  {
-    id: 'mq-hivemq',
-    name: 'HiveMQ 公共 broker',
-    url: 'wss://broker.hivemq.com:8884/mqtt',
-    mode: 'mqtt',
-    note: '实测可达',
-  },
-  {
-    id: 'mq-emqx',
-    name: 'EMQX 公共 broker',
-    url: 'wss://broker.emqx.io:8084/mqtt',
-    mode: 'mqtt',
-    note: 'trystero 默认 · 国内公司',
-  },
-  {
-    id: 'mq-emqx-cn',
-    name: 'EMQX 中国区 broker',
-    url: 'wss://broker-cn.emqx.io:8084/mqtt',
-    mode: 'mqtt',
-    note: '国内节点',
-  },
-  {
-    id: 'mq-mosquitto',
-    name: 'Mosquitto 测试 broker',
-    url: 'wss://test.mosquitto.org:8081/mqtt',
-    mode: 'mqtt',
-  },
-  {
-    id: 'mq-shiftr',
-    name: 'Shiftr 公共 broker',
-    url: 'wss://public:public@public.cloud.shiftr.io',
-    mode: 'mqtt',
-  },
-  // ---- Tracker 信令（BitTorrent，公共节点稀少） ----
-  {
-    id: 'wd',
-    name: 'webtorrent.dev',
-    url: 'wss://tracker.webtorrent.dev',
-    mode: 'torrent',
-    note: '实测可用',
-  },
-  {
-    id: 'owt',
-    name: 'openwebtorrent.com',
-    url: 'wss://tracker.openwebtorrent.com',
-    mode: 'torrent',
-    note: '实测可用',
-  },
-  {
-    id: 'self-wd',
-    name: '自建反代 · webtorrent.dev',
-    url: 'wss://send.qvqa.cn/tracker/webtorrent-dev/',
-    mode: 'torrent',
-    note: '需先配置 Nginx 反代',
-  },
-  {
-    id: 'self-owt',
-    name: '自建反代 · openwebtorrent',
-    url: 'wss://send.qvqa.cn/tracker/openwebtorrent/',
-    mode: 'torrent',
-    note: '需先配置 Nginx 反代',
-  },
-]
-
-/** 信令选择持久化 key 与取值 */
-export const TRACKER_CHOICE_KEY = 'p2p-transfer-tracker-choice'
-export const TRACKER_CHOICE_DEFAULT = '__default'
-export const TRACKER_CHOICE_MQTT_DEFAULT = '__mqtt'
-export const TRACKER_CHOICE_CUSTOM = 'custom'
-
-export interface SignalConfig {
-  list: string[]
-  mode: SignalMode
-}
+/** 自定义信令列表持久化 key（一行一个，\n 分隔） */
+export const TRACKERS_KEY = 'p2p-transfer-trackers'
 
 /**
- * 由「选择项 + 自定义列表」解析出当前生效的信令配置。
- * - __default：Tracker 构建期默认（或 NEXT_PUBLIC_TRACKERS 覆盖）
- * - __mqtt：MQTT 默认组合（trystero 内置 5 个公共 broker，冗余）
- * - 预设 id：该预设的单节点（模式随预设）
- * - custom：自定义列表（归入 Tracker 模式；为空时回退 Tracker 默认）
+ * 由「自定义列表」解析出当前生效的信令列表。
+ * 自定义非空时用自定义；否则回退默认 5 个公共 broker。
  */
-export function resolveTrackerList(choice: string, custom: string[]): SignalConfig {
-  if (choice === TRACKER_CHOICE_MQTT_DEFAULT) {
-    return { mode: 'mqtt', list: AUTO_MQTT_URLS }
-  }
-  if (choice === TRACKER_CHOICE_CUSTOM) {
-    return {
-      mode: 'torrent',
-      list: custom.length > 0 ? custom : (TRACKER_URLS ?? []),
-    }
-  }
-  const preset = TRACKER_PRESETS.find((p) => p.id === choice)
-  if (preset) return { mode: preset.mode, list: [preset.url] }
-  return { mode: 'torrent', list: TRACKER_URLS ?? [] }
+export function resolveSignalList(custom: string[]): string[] {
+  const clean = custom.map((s) => s.trim()).filter(Boolean)
+  return clean.length > 0 ? clean : DEFAULT_SIGNAL_URLS
 }
 
 export const DEFAULT_ROOM = 'default'

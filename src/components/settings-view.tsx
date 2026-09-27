@@ -2,13 +2,7 @@
 
 import { useState } from 'react'
 import type { Theme } from './transfer-app'
-import {
-  AUTO_MQTT_URLS,
-  TRACKER_CHOICE_CUSTOM,
-  TRACKER_CHOICE_DEFAULT,
-  TRACKER_CHOICE_MQTT_DEFAULT,
-  TRACKER_URLS,
-} from '@/lib/protocol'
+import { DEFAULT_SIGNAL_URLS, TRACKERS_KEY } from '@/lib/protocol'
 import { Icon } from './icons'
 
 const THEME_OPTIONS: { key: Theme; label: string }[] = [
@@ -17,42 +11,11 @@ const THEME_OPTIONS: { key: Theme; label: string }[] = [
   { key: 'dark', label: '深色' },
 ]
 
-const TRACKERS_KEY = 'p2p-transfer-trackers'
-
-/** 信令大选项：自动（默认）/ 备用 Tracker / 自定义 */
-const SIGNAL_OPTIONS: {
-  id: string
-  title: string
-  desc: string
-  count: string
-}[] = [
-  {
-    id: TRACKER_CHOICE_MQTT_DEFAULT,
-    title: '自动（推荐）',
-    desc: '自家信令优先（SSR 内置反代）+ 公共节点兜底',
-    count: `${AUTO_MQTT_URLS.length} 节点`,
-  },
-  {
-    id: TRACKER_CHOICE_DEFAULT,
-    title: '备用',
-    desc: 'BitTorrent Tracker · 自家反代优先',
-    count: `${TRACKER_URLS?.length ?? 0} 节点`,
-  },
-  {
-    id: TRACKER_CHOICE_CUSTOM,
-    title: '自定义',
-    desc: '手动填写服务器地址',
-    count: '高级',
-  },
-]
-
 export function SettingsView({
   roomId,
   onCopyLink,
   onCreateRoom,
-  choice,
   trackers,
-  onSelectTracker,
   onSaveTrackers,
   theme,
   onThemeChange,
@@ -60,9 +23,7 @@ export function SettingsView({
   roomId: string
   onCopyLink: () => void
   onCreateRoom: () => void
-  choice: string
   trackers: string[]
-  onSelectTracker: (id: string) => void
   onSaveTrackers: (list: string[]) => void
   theme: Theme
   onThemeChange: (t: Theme) => void
@@ -75,7 +36,6 @@ export function SettingsView({
     }
   })
   const [saved, setSaved] = useState(false)
-  const customMode = choice === TRACKER_CHOICE_CUSTOM
 
   const saveTrackers = () => {
     onSaveTrackers(
@@ -84,6 +44,13 @@ export function SettingsView({
         .map((s) => s.trim())
         .filter(Boolean),
     )
+    setSaved(true)
+    setTimeout(() => setSaved(false), 3000)
+  }
+
+  const resetTrackers = () => {
+    setTrackersText('')
+    onSaveTrackers([])
     setSaved(true)
     setTimeout(() => setSaved(false), 3000)
   }
@@ -113,76 +80,42 @@ export function SettingsView({
         </div>
       </section>
 
-      {/* 信令：三个大选项，默认即可用 */}
+      {/* 信令服务器：一行一个 */}
       <section className="rounded-[28px] bg-surface px-5 py-5 shadow-sm">
-        <h2 className="mb-1 text-sm font-medium text-on-surface-variant">信令连接</h2>
-        <p className="mb-3 text-xs text-on-surface-variant">
-          默认「自动」即可正常使用；两台设备需选相同选项。
+        <h2 className="mb-1 text-sm font-medium text-on-surface-variant">信令服务器</h2>
+        <p className="mb-3 text-xs leading-relaxed text-on-surface-variant">
+          一行一个地址，清空保存即恢复默认（内置 {DEFAULT_SIGNAL_URLS.length} 个公共节点）。
+          两台设备需使用相同列表才能互通。
         </p>
-        <div className="flex flex-col gap-1.5">
-          {SIGNAL_OPTIONS.map((opt) => {
-            const selected = choice === opt.id
-            return (
-              <button
-                key={opt.id}
-                onClick={() => onSelectTracker(opt.id)}
-                className={
-                  'flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left transition-colors ' +
-                  (selected
-                    ? 'bg-primary-container text-on-primary-container'
-                    : 'bg-surface2 text-on-surface-variant hover:opacity-90')
-                }
-              >
-                <span
-                  className={
-                    'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ' +
-                    (selected ? 'border-primary bg-primary' : 'border-outline')
-                  }
-                >
-                  {selected && <span className="h-2 w-2 rounded-full bg-white" />}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium">{opt.title}</span>
-                  <span className="block text-xs opacity-80">{opt.desc}</span>
-                </span>
-                <span
-                  className={
-                    'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ' +
-                    (selected ? 'bg-primary-container text-on-primary-container' : 'bg-surface text-on-surface-variant')
-                  }
-                >
-                  {opt.count}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-        <p className="mt-3 text-xs text-on-surface-variant">
-          当前生效：{trackers.length} 个节点
-        </p>
-
-        {customMode && (
-          <div className="mt-3">
-            <textarea
-              value={trackersText}
-              onChange={(e) => setTrackersText(e.target.value)}
-              placeholder={'wss://tracker.webtorrent.dev\nwss://tracker.openwebtorrent.com'}
-              rows={5}
-              spellCheck={false}
-              className="w-full resize-y rounded-2xl border border-outline-soft bg-surface px-3.5 py-2.5 font-mono text-xs leading-relaxed outline-none placeholder:text-on-surface-variant/60 focus:border-primary"
-            />
-            <div className="mt-2.5 flex items-center justify-between gap-2">
-              <p className="text-xs text-on-surface-variant">留空保存则恢复默认节点</p>
-              <button
-                onClick={saveTrackers}
-                className="flex h-10 items-center gap-1.5 rounded-full bg-primary px-4 text-sm font-semibold text-on-primary"
-              >
-                <Icon name="check" className="h-4 w-4" />
-                {saved ? '已保存' : '保存并重连'}
-              </button>
-            </div>
+        <textarea
+          value={trackersText}
+          onChange={(e) => setTrackersText(e.target.value)}
+          placeholder={DEFAULT_SIGNAL_URLS.join('\n')}
+          rows={6}
+          spellCheck={false}
+          className="w-full resize-y rounded-2xl border border-outline-soft bg-surface px-3.5 py-2.5 font-mono text-xs leading-relaxed outline-none placeholder:text-on-surface-variant/60 focus:border-primary"
+        />
+        <div className="mt-2.5 flex items-center justify-between gap-2">
+          <p className="text-xs text-on-surface-variant">
+            当前生效：{trackers.length} 个节点
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={resetTrackers}
+              className="flex h-10 items-center gap-1.5 rounded-full bg-surface2 px-4 text-sm font-medium text-on-surface-variant hover:opacity-90"
+            >
+              <Icon name="refresh" className="h-4 w-4" />
+              恢复默认
+            </button>
+            <button
+              onClick={saveTrackers}
+              className="flex h-10 items-center gap-1.5 rounded-full bg-primary px-4 text-sm font-semibold text-on-primary"
+            >
+              <Icon name="check" className="h-4 w-4" />
+              {saved ? '已保存' : '保存并重连'}
+            </button>
           </div>
-        )}
+        </div>
       </section>
 
       {/* 主题 */}
@@ -210,10 +143,10 @@ export function SettingsView({
       {/* 关于 */}
       <section className="rounded-[28px] bg-surface px-5 py-5 text-xs leading-relaxed text-on-surface-variant shadow-sm">
         <h2 className="mb-2 text-sm font-medium text-on-surface">关于</h2>
-        <p>P2P 快传 · v1.7.0</p>
+        <p>P2P 快传 · v1.8.0</p>
         <p className="mt-1">WebRTC Mesh 直连，数据不经过服务器，需 HTTPS 安全上下文。</p>
         <p className="mt-1">
-          信令内置在 SSR 服务器（自家反代优先 + 公共节点兜底），无需 Nginx 配置；连接稳定性：心跳保活、自动重连、切回页面/网络恢复自动检查、传输中屏幕常亮。
+          信令：默认公共 MQTT 网络（5 节点并行冗余），设置页可自定义一行一个地址；连接稳定性：心跳保活、自动重连、切回页面/网络恢复自动检查、传输中屏幕常亮。
         </p>
       </section>
     </div>

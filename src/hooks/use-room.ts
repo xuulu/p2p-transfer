@@ -8,8 +8,12 @@ import {
   PEER_STALE_MS,
   REJOIN_BASE_MS,
   REJOIN_MAX_MS,
+  TRACKER_CHOICE_CUSTOM,
+  TRACKER_CHOICE_DEFAULT,
+  TRACKER_CHOICE_KEY,
   TRACKER_URLS,
   TRYSTERO_APP_ID,
+  resolveTrackerList,
   shortId,
 } from '@/lib/protocol'
 import type { CancelMsg, ChunkMeta, FileMeta, TextMsg } from '@/lib/protocol'
@@ -83,7 +87,11 @@ export function useRoom(roomId: string) {
   const [notice, setNotice] = useState('')
   /** 信令曾连上、现已全断且正在自动重连 */
   const [reconnecting, setReconnecting] = useState(false)
-  // 运行时信令列表：优先取设置页保存的自定义列表，否则用构建期默认
+  /** 当前信令选择：__default / 预设 id / custom */
+  const [choice, setChoice] = useState<string>(TRACKER_CHOICE_DEFAULT)
+  /** 自定义信令列表（设置页 textarea 保存的原始值） */
+  const [customTrackers, setCustomTrackers] = useState<string[]>([])
+  // 运行时信令列表：由选择项 + 自定义列表解析得出
   const [trackers, setTrackers] = useState<string[]>(TRACKER_URLS ?? [])
 
   const roomRef = useRef<Room | null>(null)
@@ -126,6 +134,8 @@ export function useRoom(roomId: string) {
   /** Wake Lock：传输进行中防止移动端锁屏/切后台挂起 */
   const wakeLockRef = useRef<WakeLockSentinel | null>(null)
   const activeTransferRef = useRef(0)
+  /** 自定义信令列表的 ref 快照（供选择切换时解析，避免闭包过期） */
+  const customTrackersRef = useRef<string[]>([])
 
   // ---- 节流状态刷新 ----
   const flushTransfers = useCallback(() => {
@@ -196,20 +206,27 @@ export function useRoom(roomId: string) {
     activeTransferRef.current = n
   }, [transfers, acquireWakeLock, releaseWakeLock])
 
-  // 读取设置页保存的自定义信令列表
+  // 读取设置页保存的信令选择（选择项 + 自定义列表）
   useEffect(() => {
+    let c = TRACKER_CHOICE_DEFAULT
+    let custom: string[] = []
     try {
+      const storedChoice = localStorage.getItem(TRACKER_CHOICE_KEY)
+      if (storedChoice) c = storedChoice
       const raw = localStorage.getItem(TRACKERS_KEY)
       if (raw) {
-        const list = raw
+        custom = raw
           .split('\n')
           .map((s) => s.trim())
           .filter(Boolean)
-        if (list.length > 0) setTrackers(list)
       }
     } catch {
       /* ignore */
     }
+    setChoice(c)
+    setCustomTrackers(custom)
+    customTrackersRef.current = custom
+    setTrackers(resolveTrackerList(c, custom))
   }, [])
 
   // =============================================================
@@ -790,17 +807,41 @@ export function useRoom(roomId: string) {
   }, [])
 
   // =============================================================
-  // 信令列表设置（持久化；保存后 effect 依赖变化自动重连）
+  // 信令选择设置
+  // - selectTracker：下拉框选择预设（__default / 预设 id / custom），持久化并重连
+  // - saveTrackers：自定义列表保存（同时把选择项置为 custom），持久化并重连
   // =============================================================
+  const selectTracker = useCallback(
+    (id: string) => {
+      try {
+        localStorage.setItem(TRACKER_CHOICE_KEY, id)
+      } catch {
+        /* ignore */
+      }
+      setChoice(id)
+      setTrackers(resolveTrackerList(id, customTrackersRef.current))
+      showNotice(
+        id === TRACKER_CHOICE_DEFAULT
+          ? '已恢复默认信令，正在重新连接…'
+          : '已切换信令，正在重新连接…',
+      )
+    },
+    [showNotice],
+  )
+
   const saveTrackers = useCallback(
     (list: string[]) => {
       const clean = list.map((s) => s.trim()).filter(Boolean)
       try {
         if (clean.length === 0) localStorage.removeItem(TRACKERS_KEY)
         else localStorage.setItem(TRACKERS_KEY, clean.join('\n'))
+        localStorage.setItem(TRACKER_CHOICE_KEY, TRACKER_CHOICE_CUSTOM)
       } catch {
         /* ignore */
       }
+      setCustomTrackers(clean)
+      customTrackersRef.current = clean
+      setChoice(TRACKER_CHOICE_CUSTOM)
       setTrackers(clean.length > 0 ? clean : TRACKER_URLS ?? [])
       showNotice(clean.length > 0 ? '已保存，正在重新连接信令…' : '已恢复默认信令，正在重新连接…')
     },
@@ -817,12 +858,14 @@ export function useRoom(roomId: string) {
     inboxFiles,
     notice,
     reconnecting,
+    choice,
     trackers,
     sendFiles,
     sendText,
     cancelFile,
     downloadInboxFile,
     deleteInboxFile,
+    selectTracker,
     saveTrackers,
   }
 }

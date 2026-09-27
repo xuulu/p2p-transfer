@@ -12,10 +12,10 @@
 | --- | --- |
 | 界面 | LocalSend 风格：接收/发送/设置三 Tab 底部导航 + Material 3 视觉（圆角卡片、主色按钮），支持跟随系统/浅色/深色主题 |
 | 设备发现 | `@trystero-p2p/torrent`（trystero 的 BitTorrent 传输）通过公共 WebSocket BitTorrent Tracker 组播信令；连接建立后为 WebRTC Mesh |
-| 在线设备 | `room.onPeerJoin / onPeerLeave` 维护设备表，`hello` action 交换设备名；发送页多选目标设备 |
+| 在线设备 | `room.onPeerJoin / onPeerLeave` 维护设备表，`hello` action 交换设备名；接收页以卡片网格醒目展示（头像/名称/在线脉冲点/数量徽标），发送页多选目标设备 |
 | 文件传输 | 应用层按 **64KB** 分块，`file-chunk` action 逐块发送并 **`await` 每块的发送 Promise**（背压），对端按写链串行落盘 |
 | 文本传输 | 「发送」页输入文本发送给选中设备，收发双方都在传输列表留下记录，可一键复制（无自动剪贴板同步） |
-| 信令配置 | 「设置」页可自定义 Tracker 列表（一行一个，localStorage 持久化，保存后自动重连）；未配置时用构建期默认节点 |
+| 信令配置 | 「设置」页下拉选择信令节点：内置默认、8 个候选公共节点、2 个「自建反代」快捷项与自定义列表；进入页面自动对每个节点做真实 WebSocket 探测并标注 可用/不可用/检测中，用户按当前网络挑选，选择持久化并自动重连 |
 | 连接稳定性 | 心跳保活（ping/pong）检测并剔除失联设备；信令断线按指数退避自动重建房间（2s→30s）；WebRTC 直连建立后不依赖 Tracker，有存活设备时不重建；切回标签页 / 网络恢复 / 移动网络切换 / bfcache 恢复时自动检查重连；传输中请求 Wake Lock 屏幕常亮 |
 | 传输进度 | 发送端按已发送字节、接收端按已收字节实时计算，界面 150ms 节流刷新 + 速度估算 |
 | 大文件落盘 | 接收端边收边写 **OPFS**（源私有文件系统）`FileSystemWritableFileStream`，不占内存；完成后可从收件箱下载/删除 |
@@ -58,15 +58,16 @@ p2p-transfer/
     │   ├── transfer-app.tsx  # 应用外壳：房间 ID 解析、三 Tab 导航、主题管理、教程弹窗
     │   ├── receive-view.tsx  # 接收页：主卡片、房间信息、信令状态、传输/收件箱
     │   ├── send-view.tsx     # 发送页：设备列表（多选）、文本发送、选文件、拖拽投递
-    │   ├── settings-view.tsx # 设置页：房间（复制链接/新房间）、自定义信令、主题、关于
+    │   ├── settings-view.tsx # 设置页：房间（复制链接/新房间）、信令下拉选择+自动检测、自定义信令、主题、关于
     │   ├── help-dialog.tsx   # 教程与原理弹窗
-    │   ├── peer-list.tsx     # 在线设备胶囊行
+    │   ├── peer-list.tsx     # 在线设备卡片网格（接收页醒目区块）
     │   ├── transfer-list.tsx # 传输任务进度（文件）+ 文本记录（可复制）+ OPFS 收件箱
     │   └── icons.tsx         # 内联 Material 图标
     ├── hooks/
     │   └── use-room.ts       # trystero 房间生命周期 + 文件/文本协议 + 信令配置（全部在 useEffect 初始化）
     └── lib/
-        ├── protocol.ts       # 协议常量/消息类型/分块大小
+        ├── protocol.ts       # 协议常量/消息类型/分块大小/信令预设与选择解析
+        ├── probe.ts          # 信令节点可用性探测（浏览器端真实 WebSocket 握手）
         └── opfs.ts           # OPFS 流式保存、下载、删除
 ```
 
@@ -177,11 +178,17 @@ NEXT_PUBLIC_TRACKERS="wss://send.qvqa.cn/tracker/openwebtorrent/,wss://send.qvqa
 
 ## 通信排查（“两台设备互相看不到/传不了”）
 
-页面顶部状态行实时显示：`信令 N/M · 设备 K 台在线`。
+页面顶部状态行实时显示：`信令 N/M · 设备 K 台在线`；设置页「信令服务器」下拉框可一键切换节点。
+
+> **2026-09 实测结论**：对 30+ 个公共 wss Tracker 候选（含 bangumi.moe / acg.rip / nyacat / linvk
+> 等国内站点）逐一做 WebSocket 握手探测，仅 `tracker.webtorrent.dev` 与 `tracker.openwebtorrent.com`
+> 存活；国内站点普遍只提供 http/udp announce，公共生态没有可用的国内 wss 节点。
+> 因此客户端在设置页内置了这些候选 + 2 个「自建反代」快捷项，并在**浏览器端按用户当前网络
+> 自动探测**（✓ 可用 / ✗ 不可用），用户可据实选择；国内稳定方案仍是自建 Nginx 反代。
 
 | 现象 | 含义 | 处理 |
 | --- | --- | --- |
-| 状态点变红/琥珀 + “Tracker 信令全部不可达” | 公共 Tracker 连不上（国内网络常见） | 按上文「Nginx 反代 Tracker」配置并重新构建 |
+| 状态点变红/琥珀 + “Tracker 信令全部不可达” | 公共 Tracker 连不上（国内网络常见） | 设置页下拉选「自建反代」或按上文「Nginx 反代 Tracker」配置并重新构建 |
 | 信令正常但两台设备互相看不到 | WebRTC 直连失败（NAT 严格/企业网） | 为 `joinRoom` 配置 `turnConfig`（见 trystero 文档），或让两台设备处于同一局域网 |
 | 设备在线但传输失败 | 个别 NAT 类型直连失败 | 同上，启用 TURN |
 | 提示“与设备 xx 连接失败：…TURN…” | 握手阶段就要求 TURN | 配置 TURN 服务器 |

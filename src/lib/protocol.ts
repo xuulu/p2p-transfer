@@ -31,6 +31,64 @@ export const TRACKER_URLS: string[] | undefined = process.env.NEXT_PUBLIC_TRACKE
       .filter(Boolean)
   : ['wss://tracker.webtorrent.dev', 'wss://tracker.openwebtorrent.com']
 
+/**
+ * 信令节点候选（设置页下拉框）。
+ * 2026-09 实测结论：公共 wss Tracker 生态很小，30+ 候选（含 bangumi.moe / acg.rip /
+ * nyacat / linvk 等国内站点）中仅 webtorrent.dev 与 openwebtorrent.com 能完成 WebSocket
+ * 握手，国内站点普遍只提供 http/udp announce。因此下拉框同时内置「候选公共节点」
+ * 与「自建反代」快捷项，由浏览器端对用户真实网络自动探测（✓/✗），可用才建议选择；
+ * 国内稳定方案仍是自建 Nginx 反代（见 README「国内网络：Nginx 反代 Tracker」）。
+ */
+export interface TrackerPreset {
+  id: string
+  name: string
+  url: string
+  note?: string
+}
+
+export const TRACKER_PRESETS: TrackerPreset[] = [
+  { id: 'wd', name: 'webtorrent.dev', url: 'wss://tracker.webtorrent.dev', note: '实测可用' },
+  { id: 'owt', name: 'openwebtorrent.com', url: 'wss://tracker.openwebtorrent.com', note: '实测可用' },
+  { id: 'fastcast', name: 'fastcast.nz', url: 'wss://tracker.fastcast.nz' },
+  { id: 'gbitt', name: 'gbitt.info', url: 'wss://tracker.gbitt.info' },
+  { id: 'nanoha', name: 'nanoha.org', url: 'wss://tracker.nanoha.org' },
+  { id: 'moeking', name: 'moeking.me', url: 'wss://tracker.moeking.me' },
+  { id: 'opentrackr', name: 'opentrackr.org', url: 'wss://tracker.opentrackr.org:443' },
+  { id: 'tamers', name: 'tamersunion.org', url: 'wss://tracker.tamersunion.org:443' },
+  {
+    id: 'self-wd',
+    name: '自建反代 · webtorrent.dev',
+    url: 'wss://send.qvqa.cn/tracker/webtorrent-dev/',
+    note: '需先配置 Nginx 反代',
+  },
+  {
+    id: 'self-owt',
+    name: '自建反代 · openwebtorrent',
+    url: 'wss://send.qvqa.cn/tracker/openwebtorrent/',
+    note: '需先配置 Nginx 反代',
+  },
+]
+
+/** 信令选择持久化 key 与取值 */
+export const TRACKER_CHOICE_KEY = 'p2p-transfer-tracker-choice'
+export const TRACKER_CHOICE_DEFAULT = '__default'
+export const TRACKER_CHOICE_CUSTOM = 'custom'
+
+/**
+ * 由「选择项 + 自定义列表」解析出当前生效的信令列表。
+ * - __default：构建期默认（或 NEXT_PUBLIC_TRACKERS 覆盖）
+ * - 预设 id：仅该节点
+ * - custom：自定义列表（为空时回退默认）
+ */
+export function resolveTrackerList(choice: string, custom: string[]): string[] {
+  if (choice === TRACKER_CHOICE_CUSTOM) {
+    return custom.length > 0 ? custom : (TRACKER_URLS ?? [])
+  }
+  const preset = TRACKER_PRESETS.find((p) => p.id === choice)
+  if (preset) return [preset.url]
+  return TRACKER_URLS ?? []
+}
+
 export const DEFAULT_ROOM = 'default'
 
 // ---- 房间内消息（trystero action）定义 ----

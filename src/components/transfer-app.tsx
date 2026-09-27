@@ -93,6 +93,11 @@ export function TransferApp() {
       <header className="flex items-center justify-between px-4 pb-1 pt-4">
         <h1 className="text-lg font-semibold tracking-tight">P2P 快传</h1>
         <div className="flex items-center gap-1">
+          {room.peers.size > 0 && (
+            <span className="mr-1 rounded-full bg-primary-container px-2.5 py-1 text-xs font-medium text-on-primary-container">
+              设备 {room.peers.size}
+            </span>
+          )}
           <span
             title={room.reconnecting ? '信令重连中' : '信令连接状态'}
             className={
@@ -134,7 +139,9 @@ export function TransferApp() {
             roomId={roomId}
             onCopyLink={() => void copyRoomLink()}
             onCreateRoom={createNewRoom}
+            choice={room.choice}
             trackers={room.trackers}
+            onSelectTracker={room.selectTracker}
             onSaveTrackers={room.saveTrackers}
             theme={theme}
             onThemeChange={setTheme}

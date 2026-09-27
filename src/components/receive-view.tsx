@@ -104,11 +104,11 @@ export function ReceiveView({
             {room.errorMsg || '未知错误'}
           </p>
         )}
+      </section>
 
-        {/* 在线设备 */}
-        <div className="mt-3">
-          <PeerList selfId={room.selfId} peers={room.peers} />
-        </div>
+      {/* 在线设备（醒目区块） */}
+      <section className="rounded-[28px] bg-surface px-5 py-5 shadow-sm">
+        <PeerList selfId={room.selfId} peers={room.peers} />
       </section>
 
       {/* 传输（文件与文本记录，文本可复制） */}

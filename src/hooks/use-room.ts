@@ -11,11 +11,13 @@ import {
   TRACKER_CHOICE_CUSTOM,
   TRACKER_CHOICE_DEFAULT,
   TRACKER_CHOICE_KEY,
+  TRACKER_CHOICE_MQTT_DEFAULT,
   TRACKER_URLS,
   TRYSTERO_APP_ID,
   resolveTrackerList,
   shortId,
 } from '@/lib/protocol'
+import type { SignalMode } from '@/lib/protocol'
 import type { CancelMsg, ChunkMeta, FileMeta, TextMsg } from '@/lib/protocol'
 import {
   downloadOpfsFile,
@@ -87,8 +89,10 @@ export function useRoom(roomId: string) {
   const [notice, setNotice] = useState('')
   /** 信令曾连上、现已全断且正在自动重连 */
   const [reconnecting, setReconnecting] = useState(false)
-  /** 当前信令选择：__default / 预设 id / custom */
+  /** 当前信令选择：__default / __mqtt / 预设 id / custom */
   const [choice, setChoice] = useState<string>(TRACKER_CHOICE_DEFAULT)
+  /** 当前信令模式：torrent（BitTorrent Tracker）或 mqtt（公共 MQTT broker） */
+  const [signalMode, setSignalMode] = useState<SignalMode>('torrent')
   /** 自定义信令列表（设置页 textarea 保存的原始值） */
   const [customTrackers, setCustomTrackers] = useState<string[]>([])
   // 运行时信令列表：由选择项 + 自定义列表解析得出
@@ -223,10 +227,12 @@ export function useRoom(roomId: string) {
     } catch {
       /* ignore */
     }
+    const resolved = resolveTrackerList(c, custom)
     setChoice(c)
+    setSignalMode(resolved.mode)
     setCustomTrackers(custom)
     customTrackersRef.current = custom
-    setTrackers(resolveTrackerList(c, custom))
+    setTrackers(resolved.list)
   }, [])
 
   // =============================================================
@@ -300,7 +306,11 @@ export function useRoom(roomId: string) {
       setRelays([])
 
       try {
-        const mod = await import('@trystero-p2p/torrent')
+        // 按信令模式动态加载策略：torrent（BitTorrent Tracker）/ mqtt（公共 MQTT broker）
+        // 两策略的 joinRoom/selfId/getRelaySockets API 同构，统一按 torrent 模块签名使用
+        const mod = (await import(
+          signalMode === 'mqtt' ? '@trystero-p2p/mqtt' : '@trystero-p2p/torrent'
+        )) as typeof import('@trystero-p2p/torrent')
         if (!sessionActive) return
         const { joinRoom: jr, selfId: sid, getRelaySockets } = mod
         getRelaySocketsRef.current = (getRelaySockets ?? (() => ({}))) as () => Record<string, WebSocket>
@@ -309,7 +319,14 @@ export function useRoom(roomId: string) {
 
         const config: Parameters<typeof jr>[0] = {
           appId: TRYSTERO_APP_ID,
-          relayConfig: trackers.length > 0 ? { urls: trackers } : {},
+          // MQTT 默认组合直接用 trystero 内置 5 个公共 broker（含冗余）；
+          // 其余情况显式给出节点列表
+          relayConfig:
+            signalMode === 'mqtt' && choice === TRACKER_CHOICE_MQTT_DEFAULT
+              ? {}
+              : trackers.length > 0
+                ? { urls: trackers }
+                : {},
         }
         const r = jr(config, roomId, {
           onJoinError: (details) => {
@@ -588,7 +605,7 @@ export function useRoom(roomId: string) {
       }
       releaseWakeLock()
     }
-  }, [roomId, trackers, flushTransfers, updateTransfer, showNotice, releaseWakeLock])
+  }, [roomId, trackers, signalMode, choice, flushTransfers, updateTransfer, showNotice, releaseWakeLock])
 
   // =============================================================
   // 全局恢复事件：切回标签页 / 网络恢复 / 移动网络切换 / bfcache 恢复
@@ -818,12 +835,16 @@ export function useRoom(roomId: string) {
       } catch {
         /* ignore */
       }
+      const resolved = resolveTrackerList(id, customTrackersRef.current)
       setChoice(id)
-      setTrackers(resolveTrackerList(id, customTrackersRef.current))
+      setSignalMode(resolved.mode)
+      setTrackers(resolved.list)
       showNotice(
         id === TRACKER_CHOICE_DEFAULT
           ? '已恢复默认信令，正在重新连接…'
-          : '已切换信令，正在重新连接…',
+          : id === TRACKER_CHOICE_MQTT_DEFAULT
+            ? '已切换 MQTT 信令，正在重新连接…（对方设备也需选同一项）'
+            : '已切换信令，正在重新连接…（对方设备也需选同一项）',
       )
     },
     [showNotice],
@@ -842,6 +863,7 @@ export function useRoom(roomId: string) {
       setCustomTrackers(clean)
       customTrackersRef.current = clean
       setChoice(TRACKER_CHOICE_CUSTOM)
+      setSignalMode('torrent')
       setTrackers(clean.length > 0 ? clean : TRACKER_URLS ?? [])
       showNotice(clean.length > 0 ? '已保存，正在重新连接信令…' : '已恢复默认信令，正在重新连接…')
     },
@@ -859,6 +881,7 @@ export function useRoom(roomId: string) {
     notice,
     reconnecting,
     choice,
+    signalMode,
     trackers,
     sendFiles,
     sendText,

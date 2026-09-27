@@ -5,9 +5,12 @@ import type { Theme } from './transfer-app'
 import {
   TRACKER_CHOICE_CUSTOM,
   TRACKER_CHOICE_DEFAULT,
+  TRACKER_CHOICE_MQTT_DEFAULT,
   TRACKER_PRESETS,
   TRACKER_URLS,
+  MQTT_DEFAULT_URLS,
 } from '@/lib/protocol'
+import type { TrackerPreset } from '@/lib/protocol'
 import type { ProbeItem } from '@/lib/probe'
 import { probeTrackers } from '@/lib/probe'
 import { Icon } from './icons'
@@ -53,6 +56,103 @@ function ProbeBadge({ item, note }: { item?: ProbeItem; note?: string }) {
   )
 }
 
+/** 单节点选择行 */
+function SignalRow({
+  preset,
+  selected,
+  onSelect,
+  item,
+  countBadge,
+}: {
+  preset: TrackerPreset
+  selected: boolean
+  onSelect: () => void
+  item?: ProbeItem
+  countBadge?: string
+}) {
+  return (
+    <button
+      onClick={onSelect}
+      className={
+        'flex w-full items-center gap-2.5 rounded-2xl px-3.5 py-2.5 text-left text-sm transition-colors ' +
+        (selected ? 'bg-primary-container text-on-primary-container' : 'bg-surface2 hover:opacity-90')
+      }
+    >
+      <span
+        className={
+          'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ' +
+          (selected ? 'border-primary bg-primary' : 'border-outline')
+        }
+      >
+        {selected && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-medium">{preset.name}</span>
+        <span className="block truncate font-mono text-[11px] opacity-80">{preset.url}</span>
+      </span>
+      {countBadge ? (
+        <span className="shrink-0 rounded-full bg-primary-container px-2 py-0.5 text-[11px] font-medium text-on-primary-container">
+          {countBadge}
+        </span>
+      ) : (
+        <ProbeBadge item={item} note={preset.note} />
+      )}
+    </button>
+  )
+}
+
+/** 分组内预设列表：探测为不可用且未选中的项默认折叠 */
+function PresetGroup({
+  presets,
+  choice,
+  probes,
+  onSelect,
+  title,
+  desc,
+}: {
+  presets: TrackerPreset[]
+  choice: string
+  probes: Record<string, ProbeItem>
+  onSelect: (id: string) => void
+  title: string
+  desc: string
+}) {
+  const [showMore, setShowMore] = useState(false)
+  const probing = presets.some((p) => probes[p.url]?.state === 'checking')
+  const visible = presets.filter((p) => choice === p.id || probes[p.url]?.state !== 'fail')
+  const hidden = presets.filter((p) => choice !== p.id && probes[p.url]?.state === 'fail')
+  const list = showMore ? [...visible, ...hidden] : visible
+
+  return (
+    <div className="mt-3">
+      <h3 className="mb-0.5 text-xs font-semibold uppercase tracking-wide text-on-surface-variant">
+        {title}
+      </h3>
+      <p className="mb-2 text-xs text-on-surface-variant">{desc}</p>
+      <div className="flex flex-col gap-1.5">
+        {list.map((p) => (
+          <SignalRow
+            key={p.id}
+            preset={p}
+            selected={choice === p.id}
+            onSelect={() => onSelect(p.id)}
+            item={probes[p.url]}
+          />
+        ))}
+      </div>
+      {hidden.length > 0 && !probing && (
+        <button
+          onClick={() => setShowMore((v) => !v)}
+          className="mt-1.5 flex w-full items-center justify-center gap-1 rounded-2xl bg-surface2 py-1.5 text-xs font-medium text-on-surface-variant hover:opacity-90"
+        >
+          <Icon name="refresh" className={`h-3.5 w-3.5 ${showMore ? 'rotate-180' : ''} transition-transform`} />
+          {showMore ? '收起不可用节点' : `展开不可用节点（${hidden.length}）`}
+        </button>
+      )}
+    </div>
+  )
+}
+
 export function SettingsView({
   roomId,
   onCopyLink,
@@ -87,19 +187,22 @@ export function SettingsView({
   const [probing, setProbing] = useState(false)
   const [probeDone, setProbeDone] = useState(false)
 
-  const presetUrls = useMemo(() => TRACKER_PRESETS.map((p) => p.url), [])
+  const mqttPresets = useMemo(() => TRACKER_PRESETS.filter((p) => p.mode === 'mqtt'), [])
+  const torrentPresets = useMemo(() => TRACKER_PRESETS.filter((p) => p.mode === 'torrent'), [])
+
   const probeAll = useCallback(async () => {
+    const urls = TRACKER_PRESETS.map((p) => p.url)
     setProbing(true)
     setProbes((prev) => {
       const next: Record<string, ProbeItem> = {}
-      for (const u of presetUrls) next[u] = { state: 'checking' }
+      for (const u of urls) next[u] = { state: 'checking' }
       return { ...prev, ...next }
     })
-    const results = await probeTrackers(presetUrls)
+    const results = await probeTrackers(urls)
     setProbes(results)
     setProbeDone(true)
     setProbing(false)
-  }, [presetUrls])
+  }, [])
 
   // 进入设置页自动检测一次
   useEffect(() => {
@@ -144,7 +247,7 @@ export function SettingsView({
         </div>
       </section>
 
-      {/* 信令服务器：下拉选择 + 自动检测 */}
+      {/* 信令服务器：分组选择 + 自动检测 */}
       <section className="rounded-[28px] bg-surface px-5 py-5 shadow-sm">
         <div className="mb-1 flex items-center justify-between">
           <h2 className="text-sm font-medium text-on-surface-variant">信令服务器</h2>
@@ -157,109 +260,76 @@ export function SettingsView({
             {probing ? '检测中' : '重新检测'}
           </button>
         </div>
-        <p className="mb-3 text-xs leading-relaxed text-on-surface-variant">
-          选择信令节点，自动检测每个节点在当前网络下的可用性（✓/✗）。已建立直连不受切换影响，切换后自动重连。
+        <p className="mb-1 text-xs leading-relaxed text-on-surface-variant">
+          MQTT 与 Tracker 是两套信令网络，<b>双方设备必须选同一项</b>才能互通。
+          国内网络推荐 MQTT（公共 broker 冗余多、可达性好）。
         </p>
 
-        <ul className="flex flex-col gap-1.5">
-          {/* 默认 */}
-          <li>
-            <button
-              onClick={() => onSelectTracker(TRACKER_CHOICE_DEFAULT)}
-              className={
-                'flex w-full items-center gap-2.5 rounded-2xl px-3.5 py-2.5 text-left text-sm transition-colors ' +
-                (choice === TRACKER_CHOICE_DEFAULT
-                  ? 'bg-primary-container text-on-primary-container'
-                  : 'bg-surface2 hover:opacity-90')
-              }
-            >
-              <span
-                className={
-                  'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ' +
-                  (choice === TRACKER_CHOICE_DEFAULT ? 'border-primary bg-primary' : 'border-outline')
-                }
-              >
-                {choice === TRACKER_CHOICE_DEFAULT && (
-                  <span className="h-1.5 w-1.5 rounded-full bg-white" />
-                )}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium">默认（推荐）</span>
-                <span className="block truncate text-[11px] opacity-80">
-                  {(TRACKER_URLS ?? []).join(' · ') || '构建期默认节点'}
-                </span>
-              </span>
-              <span className="shrink-0 rounded-full bg-primary-container px-2 py-0.5 text-[11px] font-medium text-on-primary-container">
-                内置 {TRACKER_URLS?.length ?? 0} 节点
-              </span>
-            </button>
-          </li>
+        {/* MQTT 组（推荐） */}
+        <div className="mt-3 flex flex-col gap-1.5">
+          <SignalRow
+            preset={{
+              id: TRACKER_CHOICE_MQTT_DEFAULT,
+              name: 'MQTT 默认（推荐）',
+              url: MQTT_DEFAULT_URLS.join(' · '),
+              mode: 'mqtt',
+            }}
+            selected={choice === TRACKER_CHOICE_MQTT_DEFAULT}
+            onSelect={() => onSelectTracker(TRACKER_CHOICE_MQTT_DEFAULT)}
+            countBadge={`内置 ${MQTT_DEFAULT_URLS.length} broker`}
+          />
+        </div>
+        <PresetGroup
+          title="MQTT 信令（公共 broker）"
+          desc="单个 broker 也可选，默认组合自动连接全部（冗余）"
+          presets={mqttPresets}
+          choice={choice}
+          probes={probes}
+          onSelect={onSelectTracker}
+        />
 
-          {/* 预设节点 */}
-          {TRACKER_PRESETS.map((p) => (
-            <li key={p.id}>
-              <button
-                onClick={() => onSelectTracker(p.id)}
-                className={
-                  'flex w-full items-center gap-2.5 rounded-2xl px-3.5 py-2.5 text-left text-sm transition-colors ' +
-                  (choice === p.id
-                    ? 'bg-primary-container text-on-primary-container'
-                    : 'bg-surface2 hover:opacity-90')
-                }
-              >
-                <span
-                  className={
-                    'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ' +
-                    (choice === p.id ? 'border-primary bg-primary' : 'border-outline')
-                  }
-                >
-                  {choice === p.id && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{p.name}</span>
-                  <span className="block truncate font-mono text-[11px] opacity-80">{p.url}</span>
-                </span>
-                <ProbeBadge item={probes[p.url]} note={p.note} />
-              </button>
-            </li>
-          ))}
+        {/* Tracker 组 */}
+        <div className="mt-4 flex flex-col gap-1.5">
+          <SignalRow
+            preset={{
+              id: TRACKER_CHOICE_DEFAULT,
+              name: 'Tracker 默认（推荐）',
+              url: (TRACKER_URLS ?? []).join(' · '),
+              mode: 'torrent',
+            }}
+            selected={choice === TRACKER_CHOICE_DEFAULT}
+            onSelect={() => onSelectTracker(TRACKER_CHOICE_DEFAULT)}
+            countBadge={`内置 ${TRACKER_URLS?.length ?? 0} 节点`}
+          />
+        </div>
+        <PresetGroup
+          title="Tracker 信令（BitTorrent）"
+          desc="公共 wss Tracker 节点稀少；自建反代需先配置 Nginx"
+          presets={torrentPresets}
+          choice={choice}
+          probes={probes}
+          onSelect={onSelectTracker}
+        />
 
-          {/* 自定义 */}
-          <li>
-            <button
-              onClick={() => onSelectTracker(TRACKER_CHOICE_CUSTOM)}
-              className={
-                'flex w-full items-center gap-2.5 rounded-2xl px-3.5 py-2.5 text-left text-sm transition-colors ' +
-                (customMode
-                  ? 'bg-primary-container text-on-primary-container'
-                  : 'bg-surface2 hover:opacity-90')
-              }
-            >
-              <span
-                className={
-                  'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ' +
-                  (customMode ? 'border-primary bg-primary' : 'border-outline')
-                }
-              >
-                {customMode && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium">自定义…</span>
-                <span className="block truncate text-[11px] opacity-80">
-                  一行一个 wss:// 地址，可填 Nginx 反代节点
-                </span>
-              </span>
-              <span className="shrink-0 rounded-full bg-outline-soft px-2 py-0.5 text-[11px] text-on-surface-variant">
-                {trackers.length} 个生效
-              </span>
-            </button>
-          </li>
-        </ul>
+        {/* 自定义 */}
+        <div className="mt-4 flex flex-col gap-1.5">
+          <SignalRow
+            preset={{
+              id: TRACKER_CHOICE_CUSTOM,
+              name: '自定义…',
+              url: '一行一个 wss:// 地址（归入 Tracker 模式）',
+              mode: 'torrent',
+            }}
+            selected={customMode}
+            onSelect={() => onSelectTracker(TRACKER_CHOICE_CUSTOM)}
+            countBadge={`${trackers.length} 个生效`}
+          />
+        </div>
 
         {probeDone && (
           <p className="mt-3 rounded-2xl bg-surface2 px-3 py-2 text-xs leading-relaxed text-on-surface-variant">
-            检测结论：公共 wss Tracker 生态很小，多数候选当前不可用；国内网络建议选
-            「自建反代」节点（先按 README 配置 Nginx 反代）或「自定义」。
+            检测结论：可用节点以 ✓ 标出。若 Tracker 全部不可用，请切到 MQTT 信令
+            （EMQX / HiveMQ 等），并让对方设备选同一节点。
           </p>
         )}
 
@@ -312,10 +382,10 @@ export function SettingsView({
       {/* 关于 */}
       <section className="rounded-[28px] bg-surface px-5 py-5 text-xs leading-relaxed text-on-surface-variant shadow-sm">
         <h2 className="mb-2 text-sm font-medium text-on-surface">关于</h2>
-        <p>P2P 快传 · v1.4.0</p>
+        <p>P2P 快传 · v1.5.0</p>
         <p className="mt-1">WebRTC Mesh 直连，数据不经过服务器，需 HTTPS 安全上下文。</p>
         <p className="mt-1">
-          连接稳定性：心跳保活 + 失联剔除、信令断线自动重连（指数退避）、切回页面/网络恢复自动检查、传输中屏幕常亮。
+          信令支持 Tracker（BitTorrent）与 MQTT（公共 broker）两种模式；连接稳定性：心跳保活、自动重连、切回页面/网络恢复自动检查、传输中屏幕常亮。
         </p>
       </section>
     </div>

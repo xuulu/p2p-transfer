@@ -19,6 +19,9 @@ export function probeTracker(
       resolve({ ok: false, ms: 0 })
       return
     }
+    // 带用户信息的 URL（如 wss://public:public@host）在浏览器 WebSocket 构造时会报错，
+    // 探测只关心传输层可达性，先去掉凭据部分
+    const probeUrl = url.replace(/^(wss?):\/\/[^@/]+@/, '$1://')
     const t0 = performance.now()
     let settled = false
     const finish = (ok: boolean) => {
@@ -33,7 +36,7 @@ export function probeTracker(
     }
     let ws: WebSocket
     try {
-      ws = new WebSocket(url)
+      ws = new WebSocket(probeUrl)
     } catch {
       resolve({ ok: false, ms: 0 })
       return

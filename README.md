@@ -1,21 +1,21 @@
-# P2P 快传 — 无服务器跨设备文件与文本传输平台
+# P2P 快传 — 跨设备文件与文本传输平台
 
-基于 **Next.js 16 (App Router) + TypeScript + Tailwind CSS** 的纯静态 P2P 应用。
+基于 **Next.js 16 (App Router) + TypeScript + Tailwind CSS** 的 P2P 应用（SSR 自托管）。
 
-- **零服务器**：信令通过公共 BitTorrent Tracker 交换，之后设备间建立 WebRTC **Mesh** 直连，文件与文本不经过任何服务器
-- **纯静态导出**：`output: 'export'`，部署到任意静态托管；所有路径重写到 `index.html`，客户端从 `window.location.pathname` 解析房间 ID
-- **功能**：在线设备列表 · 拖拽发送文件 · 传输进度/速度 · 文本传输（发送栏输入，列表留痕可复制）· 信令开箱即用（自动 MQTT，可选备用/自定义）· 大文件 64KB 分块 + 逐块背压 · OPFS 流式保存
+- **数据零中转**：信令只用于建立连接，之后设备间建立 WebRTC **Mesh** 直连，文件与文本不经过任何服务器
+- **SSR 自托管 + 内置信令反代**：`server.js` 运行 Next.js 服务器，内置 WebSocket 信令反代（自家域名 → 公共 Tracker / MQTT broker），**无需 Nginx 反代配置**；所有房间路径（`/房间ID`）由服务器重写，客户端从 `window.location.pathname` 解析房间 ID
+- **功能**：在线设备列表 · 拖拽发送文件 · 传输进度/速度 · 文本传输（发送栏输入，列表留痕可复制）· 信令开箱即用（自动：自家优先 + 公共兜底）· 大文件 64KB 分块 + 逐块背压 · OPFS 流式保存
 
 ## 功能特性
 
 | 能力 | 实现要点 |
 | --- | --- |
 | 界面 | LocalSend 风格：接收/发送/设置三 Tab 底部导航 + Material 3 视觉（圆角卡片、主色按钮），支持跟随系统/浅色/深色主题 |
-| 设备发现 | 默认用公共 MQTT broker 信令（`@trystero-p2p/mqtt`，5 节点并行冗余）；备用/自定义时按选择动态加载 `@trystero-p2p/torrent`（BitTorrent Tracker）；连接建立后为 WebRTC Mesh |
+| 设备发现 | 默认 MQTT 信令（`@trystero-p2p/mqtt`）：**自家反代优先（SSR server.js 内置）+ 5 个公共 broker 兜底**，任一可达即连接；备用/自定义时动态加载 `@trystero-p2p/torrent`（BitTorrent Tracker）；连接建立后为 WebRTC Mesh |
 | 在线设备 | `room.onPeerJoin / onPeerLeave` 维护设备表，`hello` action 交换设备名；接收页以卡片网格醒目展示（头像/名称/在线脉冲点/数量徽标），发送页多选目标设备 |
 | 文件传输 | 应用层按 **64KB** 分块，`file-chunk` action 逐块发送并 **`await` 每块的发送 Promise**（背压），对端按写链串行落盘 |
 | 文本传输 | 「发送」页输入文本发送给选中设备，收发双方都在传输列表留下记录，可一键复制（无自动剪贴板同步） |
-| 信令配置 | 「设置」页仅三个大选项：自动（默认 · 公共 MQTT 网络 5 节点并行，任一可达即连接）、备用（公共 Tracker 2 节点）、自定义（手动填地址）；默认「自动」开箱即用，选择持久化并自动重连；两台设备需选相同选项 |
+| 信令配置 | 「设置」页仅三个大选项：自动（默认 · 自家反代优先 + 公共兜底）、备用（Tracker · 自家反代优先）、自定义（手动填地址）；默认「自动」开箱即用，选择持久化并自动重连；两台设备需选相同选项 |
 | 连接稳定性 | 心跳保活（ping/pong）检测并剔除失联设备；信令断线按指数退避自动重建房间（2s→30s）；WebRTC 直连建立后不依赖 Tracker，有存活设备时不重建；切回标签页 / 网络恢复 / 移动网络切换 / bfcache 恢复时自动检查重连；传输中请求 Wake Lock 屏幕常亮 |
 | 传输进度 | 发送端按已发送字节、接收端按已收字节实时计算，界面 150ms 节流刷新 + 速度估算 |
 | 大文件落盘 | 接收端边收边写 **OPFS**（源私有文件系统）`FileSystemWritableFileStream`，不占内存；完成后可从收件箱下载/删除 |
@@ -41,14 +41,12 @@
 
 ```
 p2p-transfer/
-├── package.json              # next 16 / react 19 / @trystero-p2p/torrent+mqtt / tailwind v4
-├── next.config.ts            # output: 'export' 纯静态导出
+├── package.json              # next 16 / react 19 / @trystero-p2p/torrent+mqtt / http-proxy / tailwind v4
+├── next.config.ts            # SSR 自托管配置（非纯静态导出）
+├── server.js                 # 生产服务器：Next.js handler + 房间路径重写 + WebSocket 信令反代（4 条路由）
 ├── tsconfig.json
 ├── postcss.config.mjs        # Tailwind v4 PostCSS 插件
 ├── README.md
-├── public/
-│   ├── _redirects            # Netlify / Cloudflare Pages：/* → /index.html 200
-│   └── 404.html              # GitHub Pages：未知路径暂存房间 ID 后跳回入口
 └── src/
     ├── app/
     │   ├── layout.tsx        # 根布局（metadata）
@@ -58,7 +56,7 @@ p2p-transfer/
     │   ├── transfer-app.tsx  # 应用外壳：房间 ID 解析、三 Tab 导航、主题管理、教程弹窗
     │   ├── receive-view.tsx  # 接收页：主卡片、房间信息、信令状态、传输/收件箱
     │   ├── send-view.tsx     # 发送页：设备列表（多选）、文本发送、选文件、拖拽投递
-    │   ├── settings-view.tsx # 设置页：房间（复制链接/新房间）、信令下拉选择+自动检测、自定义信令、主题、关于
+    │   ├── settings-view.tsx # 设置页：房间（复制链接/新房间）、信令三选项、自定义信令、主题、关于
     │   ├── help-dialog.tsx   # 教程与原理弹窗
     │   ├── peer-list.tsx     # 在线设备卡片网格（接收页醒目区块）
     │   ├── transfer-list.tsx # 传输任务进度（文件）+ 文本记录（可复制）+ OPFS 收件箱
@@ -74,115 +72,63 @@ p2p-transfer/
 
 ```bash
 npm install
-npm run dev        # 开发模式 http://localhost:3000
-npm run build      # 静态导出到 out/
-npm run preview    # 本地预览 out/（serve）
+npm run dev        # 开发模式 http://localhost:3000（连公共信令节点）
+npm run build      # 生产构建
+npm start          # 生产运行（NODE_ENV=production node server.js，默认端口 3000，PORT 可覆盖）
 ```
 
 打开两个浏览器标签访问同一个链接（如 `http://localhost:3000/demo1`），即可看到双方上线并互传文件/文本。
 
-> 房间 ID 即 URL 路径的最后一段：访问 `/任意ID` 即加入该房间。点「复制房间链接」把完整 URL 发给另一台设备即可。
+> 房间 ID 即 URL 路径的最后一段：访问 `/任意ID` 即加入该房间。点「复制房间链接」把完整 URL 发给另一台设备即可。房间路径由 `server.js` 统一重写渲染首页，客户端从 `window.location.pathname` 恢复房间 ID。
 
-## 部署（静态托管）
+## 部署（SSR 自托管）
 
-构建产物在 `out/`，整个目录上传即可。关键点：**所有路径都要重写到 `index.html`**。
+生产由 `server.js` 运行（Next.js 服务器 + 内置信令反代），需要一台能跑 Node 的服务器：
 
-### Netlify / Cloudflare Pages（零配置）
-
-`public/_redirects` 已包含：
-
-```
-/* /index.html 200
+```bash
+npm ci
+npm run build
+NODE_ENV=production PORT=3000 node server.js    # 或 pm2 start server.js 等守护
 ```
 
-构建命令 `npm run build`，发布目录 `out`。
-
-### GitHub Pages
-
-不支持路径重写，用仓库内 `public/404.html` 的兜底方案：
-
-1. 构建并把 `out/` 内容推到 `gh-pages` 分支（或 Actions 部署）
-2. 未知路径（即房间链接）会返回 `404.html`，它把房间 ID 存入 `sessionStorage` 后跳回入口
-3. 入口页客户端恢复房间 ID，并把地址栏规范化为 `/房间ID`，之后复制的链接即可直接使用
-
-> 注意：房间 ID 必须为**单路径段**（本项目已限定 `[a-zA-Z0-9_-]` 1–64 位），否则 404 兜底的相对路径会失效。
-
-### Nginx
+Nginx 只需**常规反向代理**（TLS 终止 + 转发到 Node），无需任何信令反代配置：
 
 ```nginx
 server {
   listen 443 ssl;
-  root /var/www/p2p-transfer/out;
+  server_name send.qvqa.cn;
+  # ssl_certificate / ssl_certificate_key ...
 
   location / {
-    try_files $uri /index.html;   # 关键：所有路径回退到 index.html
-  }
-}
-```
-
-### 国内网络：Nginx 反代 Tracker
-
-公共 BitTorrent Tracker 多为境外节点，国内网络常无法直连（表现：页面顶部状态行显示
-「Tracker 信令全部不可达」）。推荐用你的服务器反代 Tracker 信令，让设备都连到你的域名：
-
-```nginx
-# 需要 map 支持（http 块内）：把 wss 升级头转发给上游
-map $http_upgrade $connection_upgrade {
-  default upgrade;
-  ''      close;
-}
-
-server {
-  # ... 上述站点配置 ...
-
-  location /tracker/openwebtorrent/ {
-    proxy_pass https://tracker.openwebtorrent.com/;
+    proxy_pass http://127.0.0.1:3000;    # 常规转发即可
     proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $connection_upgrade;
-    proxy_set_header Host tracker.openwebtorrent.com;
-    proxy_read_timeout 3600s;
-  }
-  location /tracker/webtorrent-dev/ {
-    proxy_pass https://tracker.webtorrent.dev/;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $connection_upgrade;
-    proxy_set_header Host tracker.webtorrent.dev;
+    proxy_set_header Upgrade $http_upgrade;      # WebSocket（信令反代）需要
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
     proxy_read_timeout 3600s;
   }
 }
 ```
 
-然后**构建时**注入反代地址（必须重新 `npm run build`）：
+> WebSocket 信令反代（`/mqtt-emqx`、`/mqtt-hivemq`、`/tracker/*` → 公共节点）已内置在
+> `server.js`，设备默认「自动」模式会自动优先连自家反代（`wss://send.qvqa.cn/mqtt-emqx`），
+> 公共节点兜底——**无需在 Nginx 再配任何信令转发**。
 
-```bash
-NEXT_PUBLIC_TRACKERS="wss://send.qvqa.cn/tracker/openwebtorrent/,wss://send.qvqa.cn/tracker/webtorrent-dev/" npm run build
-```
+### 环境变量（构建期）
 
-> 说明：trystero 会同时连接列表里的所有 Tracker，任一可达即能完成信令交换。默认值
-> 是实测在线的两个公共节点（`tracker.webtorrent.dev`、`tracker.openwebtorrent.com`）；
-> 国内网络连不通时，按上文反代并重新构建即可。
-
-## 环境变量（构建期）
-
-- `NEXT_PUBLIC_TRACKERS`：逗号分隔的公共 WebSocket Tracker 列表，覆盖默认值。例如：
-
-  ```bash
-  NEXT_PUBLIC_TRACKERS="wss://send.qvqa.cn/tracker/openwebtorrent/,wss://send.qvqa.cn/tracker/webtorrent-dev/" npm run build
-  ```
-
-  不设置时使用内置默认：`wss://tracker.webtorrent.dev, wss://tracker.openwebtorrent.com`
-  （均为实测在线节点；如需覆盖再设置）。
+- `NEXT_PUBLIC_SELF_RELAY`：MQTT 自家反代地址，默认 `wss://send.qvqa.cn/mqtt-emqx`（换域名时覆盖）
+- `NEXT_PUBLIC_TRACKERS`：逗号分隔的 Tracker 列表，覆盖「备用」默认值（自家反代 + 2 个公共节点）
 
 ## 通信排查（“两台设备互相看不到/传不了”）
 
 页面顶部状态行实时显示：`信令 N/M · 设备 K 台在线`；设置页「信令连接」三选一。
 
-> **默认「自动」即可正常使用**：它同时连接 5 个公共 MQTT broker（EMQX 国内 /
-> EMQX 中国区 / HiveMQ / Mosquitto / Shiftr，多节点并行冗余，任一可达即完成信令），
-> 断线自动重连。若你的网络连不上 MQTT，设置页改选「备用」（2 个实测在线的公共
-> BitTorrent Tracker：webtorrent.dev / openwebtorrent.com）或「自定义」。
+> **默认「自动」即可正常使用**：自家信令反代优先（SSR server.js 内置：
+> `wss://send.qvqa.cn/mqtt-emqx` → EMQX，国内访问自家域名必达）+ 5 个公共 MQTT broker
+> 兜底（EMQX 国内 / EMQX 中国区 / HiveMQ / Mosquitto / Shiftr），多节点并行冗余，
+> 任一可达即完成信令，断线自动重连。若你的网络连不上 MQTT，设置页改选「备用」
+> （自家反代优先 + 2 个实测在线的公共 Tracker：webtorrent.dev / openwebtorrent.com）
+> 或「自定义」。
 > 2026-09 实测：公共 wss Tracker 生态仅上述 2 节点存活（fastcast / gbitt / nanoha /
 > moeking / opentrackr / tamers 等均已失效），国内站点普遍无 wss announce；
 > 公共 MQTT broker 冗余多、可达性好，故为默认。
@@ -190,7 +136,7 @@ NEXT_PUBLIC_TRACKERS="wss://send.qvqa.cn/tracker/openwebtorrent/,wss://send.qvqa
 
 | 现象 | 含义 | 处理 |
 | --- | --- | --- |
-| 状态点变红/琥珀 + “信令全部不可达” | 当前信令节点连不上（国内网络常见） | 设置页换一个选项（自动/备用/自定义），两台设备保持一致；仍不行按「Nginx 反代 Tracker」自建并重新构建 |
+| 状态点变红/琥珀 + “信令全部不可达” | 当前信令节点连不上（国内网络常见） | 设置页换一个选项（自动/备用/自定义），两台设备保持一致；确认 `server.js` 反代路由在运行 |
 | 信令正常但两台设备互相看不到 | WebRTC 直连失败（NAT 严格/企业网） | 为 `joinRoom` 配置 `turnConfig`（见 trystero 文档），或让两台设备处于同一局域网 |
 | 设备在线但传输失败 | 个别 NAT 类型直连失败 | 同上，启用 TURN |
 | 提示“与设备 xx 连接失败：…TURN…” | 握手阶段就要求 TURN | 配置 TURN 服务器 |

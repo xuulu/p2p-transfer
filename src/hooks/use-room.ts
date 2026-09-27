@@ -3,12 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DataPayload, MessageAction, joinRoom } from '@trystero-p2p/torrent'
 import {
+  AUTO_MQTT_URLS,
   CHUNK_SIZE,
   HEARTBEAT_MS,
   PEER_STALE_MS,
   REJOIN_BASE_MS,
   REJOIN_MAX_MS,
-  MQTT_DEFAULT_URLS,
   TRACKER_CHOICE_CUSTOM,
   TRACKER_CHOICE_DEFAULT,
   TRACKER_CHOICE_KEY,
@@ -98,7 +98,7 @@ export function useRoom(roomId: string) {
   /** 自定义信令列表（设置页 textarea 保存的原始值） */
   const [customTrackers, setCustomTrackers] = useState<string[]>([])
   // 运行时信令列表：由选择项 + 自定义列表解析得出
-  const [trackers, setTrackers] = useState<string[]>(MQTT_DEFAULT_URLS)
+  const [trackers, setTrackers] = useState<string[]>(AUTO_MQTT_URLS)
 
   const roomRef = useRef<Room | null>(null)
   const actionsRef = useRef<{

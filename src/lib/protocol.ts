@@ -19,27 +19,35 @@ export const REJOIN_MAX_MS = 30_000
 export const TRYSTERO_APP_ID = 'p2p-transfer-platform-v1'
 
 /**
- * 公共 BitTorrent Tracker 列表（默认使用实测在线的节点）。
- * trystero 内置默认列表里多个 Tracker 已失效（open.ftorrent / btorrent.xyz / files.fm），
- * 且均为境外节点，国内网络常不可达。国内部署建议用自有服务器（如 send.qvqa.cn 的 Nginx）
- * 反代 Tracker 信令，见 README「国内网络：Nginx 反代 Tracker」一节，构建时用环境变量覆盖：
- *   NEXT_PUBLIC_TRACKERS="wss://send.qvqa.cn/tracker/openwebtorrent/,wss://send.qvqa.cn/tracker/webtorrent-dev/" npm run build
+ * 自托管信令反代（SSR 服务器 server.js 内置，无需 Nginx 反代）：
+ * - SELF_RELAY_MQTT：自家域名 → EMQX 公共 broker（MQTT 模式，自动默认首选）
+ * - SELF_RELAY_TRACKER：自家域名 → webtorrent.dev 公共 tracker（Tracker 模式，默认首选）
+ * 构建时可用 NEXT_PUBLIC_SELF_RELAY 覆盖 MQTT 反代地址（换域名时使用）。
+ */
+export const SELF_RELAY_MQTT = process.env.NEXT_PUBLIC_SELF_RELAY ?? 'wss://send.qvqa.cn/mqtt-emqx'
+export const SELF_RELAY_TRACKER = 'wss://send.qvqa.cn/tracker/webtorrent-dev/'
+
+/**
+ * 公共 BitTorrent Tracker 列表（默认自家反代优先 + 实测在线的公共节点兜底）。
+ * 2026-09 实测：公共 wss Tracker 生态很小，仅 webtorrent.dev / openwebtorrent.com 存活。
+ * 构建时可用 NEXT_PUBLIC_TRACKERS 环境变量覆盖整个列表。
  */
 export const TRACKER_URLS: string[] | undefined = process.env.NEXT_PUBLIC_TRACKERS
   ? process.env.NEXT_PUBLIC_TRACKERS.split(',')
       .map((s) => s.trim())
       .filter(Boolean)
-  : ['wss://tracker.webtorrent.dev', 'wss://tracker.openwebtorrent.com']
+  : [SELF_RELAY_TRACKER, 'wss://tracker.webtorrent.dev', 'wss://tracker.openwebtorrent.com']
 
 /**
- * 信令模式与节点预设（设置页下拉框）。
+ * 信令模式与节点预设（设置页）。
  *
  * 2026-09 实测结论（30+ 候选逐一 WebSocket 握手）：
  * - Tracker 信令：公共 wss BitTorrent Tracker 生态很小，仅 webtorrent.dev /
  *   openwebtorrent.com 存活，其余候选（fastcast / gbitt / nanoha / moeking /
- *   opentrackr / tamers 等）均已失效，故不再纳入预设；国内稳定方案是自建 Nginx 反代。
+ *   opentrackr / tamers 等）均已失效，故不再纳入预设。
  * - MQTT 信令（trystero 另一策略）：用公共 MQTT broker 交换信令，同样无服务器；
  *   公共 broker 冗余多、国内可达性好（EMQX 为国内公司），推荐国内网络使用。
+ * - SSR 部署后自动模式「自家反代优先 + 公共节点兜底」，见 server.js。
  *   双方设备必须选择同一信令方式与节点才能互通。
  */
 export type SignalMode = 'torrent' | 'mqtt'
@@ -60,6 +68,9 @@ export const MQTT_DEFAULT_URLS = [
   'wss://broker-cn.emqx.io:8084/mqtt',
   'wss://broker.hivemq.com:8884/mqtt',
 ]
+
+/** 自动（MQTT）模式节点：自家反代优先 + 公共 5 broker 兜底 */
+export const AUTO_MQTT_URLS = [SELF_RELAY_MQTT, ...MQTT_DEFAULT_URLS]
 
 export const TRACKER_PRESETS: TrackerPreset[] = [
   // ---- MQTT 信令（推荐 · 国内可达性好） ----
@@ -147,7 +158,7 @@ export interface SignalConfig {
  */
 export function resolveTrackerList(choice: string, custom: string[]): SignalConfig {
   if (choice === TRACKER_CHOICE_MQTT_DEFAULT) {
-    return { mode: 'mqtt', list: MQTT_DEFAULT_URLS }
+    return { mode: 'mqtt', list: AUTO_MQTT_URLS }
   }
   if (choice === TRACKER_CHOICE_CUSTOM) {
     return {

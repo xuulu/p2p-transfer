@@ -3,11 +3,11 @@
 import { useState } from 'react'
 import type { Theme } from './transfer-app'
 import {
+  AUTO_MQTT_URLS,
   TRACKER_CHOICE_CUSTOM,
   TRACKER_CHOICE_DEFAULT,
   TRACKER_CHOICE_MQTT_DEFAULT,
   TRACKER_URLS,
-  MQTT_DEFAULT_URLS,
 } from '@/lib/protocol'
 import { Icon } from './icons'
 
@@ -29,13 +29,13 @@ const SIGNAL_OPTIONS: {
   {
     id: TRACKER_CHOICE_MQTT_DEFAULT,
     title: '自动（推荐）',
-    desc: '公共 MQTT 网络 · 5 个节点并行，任一可达即连接',
-    count: `5 节点`,
+    desc: '自家信令优先（SSR 内置反代）+ 公共节点兜底',
+    count: `${AUTO_MQTT_URLS.length} 节点`,
   },
   {
     id: TRACKER_CHOICE_DEFAULT,
     title: '备用',
-    desc: '公共 BitTorrent Tracker · 2 个节点',
+    desc: 'BitTorrent Tracker · 自家反代优先',
     count: `${TRACKER_URLS?.length ?? 0} 节点`,
   },
   {
@@ -210,10 +210,10 @@ export function SettingsView({
       {/* 关于 */}
       <section className="rounded-[28px] bg-surface px-5 py-5 text-xs leading-relaxed text-on-surface-variant shadow-sm">
         <h2 className="mb-2 text-sm font-medium text-on-surface">关于</h2>
-        <p>P2P 快传 · v1.6.0</p>
+        <p>P2P 快传 · v1.7.0</p>
         <p className="mt-1">WebRTC Mesh 直连，数据不经过服务器，需 HTTPS 安全上下文。</p>
         <p className="mt-1">
-          信令默认自动连接公共 MQTT 网络（多节点冗余，断线自动重连）；连接稳定性：心跳保活、切回页面/网络恢复自动检查、传输中屏幕常亮。
+          信令内置在 SSR 服务器（自家反代优先 + 公共节点兜底），无需 Nginx 配置；连接稳定性：心跳保活、自动重连、切回页面/网络恢复自动检查、传输中屏幕常亮。
         </p>
       </section>
     </div>

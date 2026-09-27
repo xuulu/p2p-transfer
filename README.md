@@ -4,18 +4,18 @@
 
 - **零服务器**：信令通过公共 BitTorrent Tracker 交换，之后设备间建立 WebRTC **Mesh** 直连，文件与文本不经过任何服务器
 - **纯静态导出**：`output: 'export'`，部署到任意静态托管；所有路径重写到 `index.html`，客户端从 `window.location.pathname` 解析房间 ID
-- **功能**：在线设备列表 · 拖拽发送文件 · 传输进度/速度 · 文本传输（发送栏输入，列表留痕可复制）· 信令下拉选择（Tracker/MQTT 双模式 + 自动检测）· 大文件 64KB 分块 + 逐块背压 · OPFS 流式保存
+- **功能**：在线设备列表 · 拖拽发送文件 · 传输进度/速度 · 文本传输（发送栏输入，列表留痕可复制）· 信令开箱即用（自动 MQTT，可选备用/自定义）· 大文件 64KB 分块 + 逐块背压 · OPFS 流式保存
 
 ## 功能特性
 
 | 能力 | 实现要点 |
 | --- | --- |
 | 界面 | LocalSend 风格：接收/发送/设置三 Tab 底部导航 + Material 3 视觉（圆角卡片、主色按钮），支持跟随系统/浅色/深色主题 |
-| 设备发现 | `@trystero-p2p/torrent`（BitTorrent Tracker 信令）与 `@trystero-p2p/mqtt`（公共 MQTT broker 信令）双模式，按设置选择动态加载；连接建立后为 WebRTC Mesh |
+| 设备发现 | 默认用公共 MQTT broker 信令（`@trystero-p2p/mqtt`，5 节点并行冗余）；备用/自定义时按选择动态加载 `@trystero-p2p/torrent`（BitTorrent Tracker）；连接建立后为 WebRTC Mesh |
 | 在线设备 | `room.onPeerJoin / onPeerLeave` 维护设备表，`hello` action 交换设备名；接收页以卡片网格醒目展示（头像/名称/在线脉冲点/数量徽标），发送页多选目标设备 |
 | 文件传输 | 应用层按 **64KB** 分块，`file-chunk` action 逐块发送并 **`await` 每块的发送 Promise**（背压），对端按写链串行落盘 |
 | 文本传输 | 「发送」页输入文本发送给选中设备，收发双方都在传输列表留下记录，可一键复制（无自动剪贴板同步） |
-| 信令配置 | 「设置」页分组下拉：MQTT 信令（推荐 · 公共 broker 冗余多、国内可达性好）与 Tracker 信令（BitTorrent · 公共节点稀少）各含默认组合与单节点选项，外加自定义列表；进入页面自动对每个节点做真实 WebSocket 探测并标注 可用/不可用/检测中，探测为不可用且未选中的节点默认折叠，用户按当前网络挑选；选择持久化并自动重连 |
+| 信令配置 | 「设置」页仅三个大选项：自动（默认 · 公共 MQTT 网络 5 节点并行，任一可达即连接）、备用（公共 Tracker 2 节点）、自定义（手动填地址）；默认「自动」开箱即用，选择持久化并自动重连；两台设备需选相同选项 |
 | 连接稳定性 | 心跳保活（ping/pong）检测并剔除失联设备；信令断线按指数退避自动重建房间（2s→30s）；WebRTC 直连建立后不依赖 Tracker，有存活设备时不重建；切回标签页 / 网络恢复 / 移动网络切换 / bfcache 恢复时自动检查重连；传输中请求 Wake Lock 屏幕常亮 |
 | 传输进度 | 发送端按已发送字节、接收端按已收字节实时计算，界面 150ms 节流刷新 + 速度估算 |
 | 大文件落盘 | 接收端边收边写 **OPFS**（源私有文件系统）`FileSystemWritableFileStream`，不占内存；完成后可从收件箱下载/删除 |
@@ -66,8 +66,7 @@ p2p-transfer/
     ├── hooks/
     │   └── use-room.ts       # trystero 房间生命周期 + 文件/文本协议 + 信令配置（全部在 useEffect 初始化）
     └── lib/
-        ├── protocol.ts       # 协议常量/消息类型/分块大小/信令预设与选择解析
-        ├── probe.ts          # 信令节点可用性探测（浏览器端真实 WebSocket 握手）
+        ├── protocol.ts       # 协议常量/消息类型/分块大小/信令默认节点与模式解析
         └── opfs.ts           # OPFS 流式保存、下载、删除
 ```
 
@@ -178,27 +177,20 @@ NEXT_PUBLIC_TRACKERS="wss://send.qvqa.cn/tracker/openwebtorrent/,wss://send.qvqa
 
 ## 通信排查（“两台设备互相看不到/传不了”）
 
-页面顶部状态行实时显示：`信令 N/M · 设备 K 台在线`；设置页「信令服务器」下拉框可一键切换节点。
+页面顶部状态行实时显示：`信令 N/M · 设备 K 台在线`；设置页「信令连接」三选一。
 
-> **2026-09 实测结论（双模式信令）**：
-> - **Tracker 信令**：对 30+ 个公共 wss BitTorrent Tracker 候选（含 bangumi.moe / acg.rip /
->   nyacat / linvk 等国内站点）逐一握手探测，仅 `tracker.webtorrent.dev` 与
->   `tracker.openwebtorrent.com` 存活；fastcast / gbitt / nanoha / moeking / opentrackr /
->   tamers 等候选均已失效，不再内置。国内站点普遍只提供 http/udp announce，公共生态
->   没有可用的国内 wss Tracker。
-> - **MQTT 信令（推荐 · 国内网络首选）**：trystero 支持用公共 MQTT broker 交换信令，
->   同样无服务器。公共 broker 冗余多、可达性好——EMQX（broker.emqx.io /
->   broker-cn.emqx.io，国内公司、trystero 默认）、HiveMQ（broker.hivemq.com，实测可达）、
->   Mosquitto（test.mosquitto.org）。「MQTT 默认」组合会同时连接全部 5 个 broker（冗余），
->   任一可达即完成信令。
-> - 客户端在设置页按 MQTT / Tracker 分组内置全部选项，并在**浏览器端按用户当前网络
->   自动探测**（✓ 可用 / ✗ 不可用，不可用节点默认折叠），用户可据实选择。
->   **注意：双方设备必须选择同一信令方式与同一节点**才能互通（MQTT 与 Tracker 是两套
->   信令网络，互不通信）。
+> **默认「自动」即可正常使用**：它同时连接 5 个公共 MQTT broker（EMQX 国内 /
+> EMQX 中国区 / HiveMQ / Mosquitto / Shiftr，多节点并行冗余，任一可达即完成信令），
+> 断线自动重连。若你的网络连不上 MQTT，设置页改选「备用」（2 个实测在线的公共
+> BitTorrent Tracker：webtorrent.dev / openwebtorrent.com）或「自定义」。
+> 2026-09 实测：公共 wss Tracker 生态仅上述 2 节点存活（fastcast / gbitt / nanoha /
+> moeking / opentrackr / tamers 等均已失效），国内站点普遍无 wss announce；
+> 公共 MQTT broker 冗余多、可达性好，故为默认。
+> **两台设备需选相同选项**（MQTT 与 Tracker 是两套信令网络，互不通信）。
 
 | 现象 | 含义 | 处理 |
 | --- | --- | --- |
-| 状态点变红/琥珀 + “信令全部不可达” | 当前信令节点连不上（国内网络常见） | 设置页下拉切到「MQTT 默认」（推荐，多 broker 冗余）或「自建反代」，双方设备选同一项；仍不行再按「Nginx 反代 Tracker」自建并重新构建 |
+| 状态点变红/琥珀 + “信令全部不可达” | 当前信令节点连不上（国内网络常见） | 设置页换一个选项（自动/备用/自定义），两台设备保持一致；仍不行按「Nginx 反代 Tracker」自建并重新构建 |
 | 信令正常但两台设备互相看不到 | WebRTC 直连失败（NAT 严格/企业网） | 为 `joinRoom` 配置 `turnConfig`（见 trystero 文档），或让两台设备处于同一局域网 |
 | 设备在线但传输失败 | 个别 NAT 类型直连失败 | 同上，启用 TURN |
 | 提示“与设备 xx 连接失败：…TURN…” | 握手阶段就要求 TURN | 配置 TURN 服务器 |

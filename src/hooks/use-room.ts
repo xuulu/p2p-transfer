@@ -8,10 +8,12 @@ import {
   PEER_STALE_MS,
   REJOIN_BASE_MS,
   REJOIN_MAX_MS,
+  MQTT_DEFAULT_URLS,
   TRACKER_CHOICE_CUSTOM,
   TRACKER_CHOICE_DEFAULT,
   TRACKER_CHOICE_KEY,
   TRACKER_CHOICE_MQTT_DEFAULT,
+  TRACKER_PRESETS,
   TRACKER_URLS,
   TRYSTERO_APP_ID,
   resolveTrackerList,
@@ -89,14 +91,14 @@ export function useRoom(roomId: string) {
   const [notice, setNotice] = useState('')
   /** 信令曾连上、现已全断且正在自动重连 */
   const [reconnecting, setReconnecting] = useState(false)
-  /** 当前信令选择：__default / __mqtt / 预设 id / custom */
-  const [choice, setChoice] = useState<string>(TRACKER_CHOICE_DEFAULT)
+  /** 当前信令选择：__mqtt（自动，默认）/ __default（备用 Tracker）/ 预设 id / custom */
+  const [choice, setChoice] = useState<string>(TRACKER_CHOICE_MQTT_DEFAULT)
   /** 当前信令模式：torrent（BitTorrent Tracker）或 mqtt（公共 MQTT broker） */
-  const [signalMode, setSignalMode] = useState<SignalMode>('torrent')
+  const [signalMode, setSignalMode] = useState<SignalMode>('mqtt')
   /** 自定义信令列表（设置页 textarea 保存的原始值） */
   const [customTrackers, setCustomTrackers] = useState<string[]>([])
   // 运行时信令列表：由选择项 + 自定义列表解析得出
-  const [trackers, setTrackers] = useState<string[]>(TRACKER_URLS ?? [])
+  const [trackers, setTrackers] = useState<string[]>(MQTT_DEFAULT_URLS)
 
   const roomRef = useRef<Room | null>(null)
   const actionsRef = useRef<{
@@ -210,13 +212,20 @@ export function useRoom(roomId: string) {
     activeTransferRef.current = n
   }, [transfers, acquireWakeLock, releaseWakeLock])
 
-  // 读取设置页保存的信令选择（选择项 + 自定义列表）
+  // 读取设置页保存的信令选择（选择项 + 自定义列表），旧值平滑迁移到「自动 MQTT」
   useEffect(() => {
-    let c = TRACKER_CHOICE_DEFAULT
+    let c = TRACKER_CHOICE_MQTT_DEFAULT
     let custom: string[] = []
     try {
       const storedChoice = localStorage.getItem(TRACKER_CHOICE_KEY)
-      if (storedChoice) c = storedChoice
+      if (storedChoice) {
+        // 旧版默认/已失效预设统一迁移到自动 MQTT；自定义与 MQTT 相关选择保持尊重
+        const known =
+          storedChoice === TRACKER_CHOICE_MQTT_DEFAULT ||
+          storedChoice === TRACKER_CHOICE_CUSTOM ||
+          TRACKER_PRESETS.some((p) => p.id === storedChoice && p.mode === 'mqtt')
+        if (known) c = storedChoice
+      }
       const raw = localStorage.getItem(TRACKERS_KEY)
       if (raw) {
         custom = raw
@@ -228,6 +237,13 @@ export function useRoom(roomId: string) {
       /* ignore */
     }
     const resolved = resolveTrackerList(c, custom)
+    if (c !== TRACKER_CHOICE_MQTT_DEFAULT) {
+      try {
+        localStorage.setItem(TRACKER_CHOICE_KEY, c)
+      } catch {
+        /* ignore */
+      }
+    }
     setChoice(c)
     setSignalMode(resolved.mode)
     setCustomTrackers(custom)

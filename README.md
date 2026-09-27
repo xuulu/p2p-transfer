@@ -4,18 +4,18 @@
 
 - **数据零中转**：信令只用于建立连接，之后设备间建立 WebRTC **Mesh** 直连，文件与文本不经过任何服务器
 - **纯静态导出**：`output: 'export'`，部署到任意静态托管；所有路径重写到 `index.html`，客户端从 `window.location.pathname` 解析房间 ID
-- **功能**：在线设备列表 · 拖拽发送文件 · 传输进度/速度 · 文本传输（发送栏输入，列表留痕可复制）· 信令一行一个（默认 5 个公共 MQTT broker）· 大文件 64KB 分块 + 逐块背压 · OPFS 流式保存
+- **功能**：在线设备列表 · 拖拽发送文件 · 传输进度/速度 · 文本传输（发送栏输入，列表留痕可复制）· 信令默认 Trystero 内置节点（可自定义一行一个覆盖）· 大文件 64KB 分块 + 逐块背压 · OPFS 流式保存
 
 ## 功能特性
 
 | 能力 | 实现要点 |
 | --- | --- |
 | 界面 | LocalSend 风格：接收/发送/设置三 Tab 底部导航 + Material 3 视觉（圆角卡片、主色按钮），支持跟随系统/浅色/深色主题 |
-| 设备发现 | 默认 MQTT 信令（`@trystero-p2p/mqtt`，5 个公共 broker 并行冗余，任一可达即连接）；自定义列表时用填写的地址；连接建立后为 WebRTC Mesh |
+| 设备发现 | 默认 **Trystero 内置信令**（`@trystero-p2p/mqtt` 的 `defaultRelayUrls`，5 个公共 broker 并行冗余，任一可达即连接，零配置）；自定义列表非空时整体覆盖；连接建立后为 WebRTC Mesh |
 | 在线设备 | `room.onPeerJoin / onPeerLeave` 维护设备表，`hello` action 交换设备名；接收页以卡片网格醒目展示（头像/名称/在线脉冲点/数量徽标），发送页多选目标设备 |
 | 文件传输 | 应用层按 **64KB** 分块，`file-chunk` action 逐块发送并 **`await` 每块的发送 Promise**（背压），对端按写链串行落盘 |
 | 文本传输 | 「发送」页输入文本发送给选中设备，收发双方都在传输列表留下记录，可一键复制（无自动剪贴板同步） |
-| 信令配置 | 「设置」页**一行一个**服务器地址（localStorage 持久化，保存后自动重连）；清空保存恢复默认（内置 5 个公共 MQTT broker）；两台设备需使用相同列表才能互通 |
+| 信令配置 | 默认**直接用 Trystero 内置节点**（零配置）；「设置」页可**一行一个**自定义服务器地址（localStorage 持久化，保存后自动重连）；清空保存恢复内置默认；两台设备需使用相同列表才能互通 |
 | 连接稳定性 | 心跳保活（ping/pong）检测并剔除失联设备；信令断线按指数退避自动重建房间（2s→30s）；WebRTC 直连建立后不依赖 Tracker，有存活设备时不重建；切回标签页 / 网络恢复 / 移动网络切换 / bfcache 恢复时自动检查重连；传输中请求 Wake Lock 屏幕常亮 |
 | 传输进度 | 发送端按已发送字节、接收端按已收字节实时计算，界面 150ms 节流刷新 + 速度估算 |
 | 大文件落盘 | 接收端边收边写 **OPFS**（源私有文件系统）`FileSystemWritableFileStream`，不占内存；完成后可从收件箱下载/删除 |
@@ -124,10 +124,10 @@ server {
 
 页面顶部状态行实时显示：`信令 N/M · 设备 K 台在线`；设置页「信令服务器」一行一个。
 
-> **默认无需配置**：内置 5 个公共 MQTT broker（EMQX / EMQX 中国区 / HiveMQ / Mosquitto /
-> Shiftr）并行冗余，任一可达即完成信令，断线自动重连；其中 EMQX（国内公司）在国内可达性好。
-> 若你的网络连不上这些节点，在设置页 textarea 里**一行一个**填入实测可用的公共 MQTT broker
-> 地址，保存后自动重连。
+> **默认零配置**：直接用 trystero 内置的 5 个公共 MQTT broker（Mosquitto / EMQX / Shiftr /
+> EMQX 中国区 / HiveMQ）并行冗余，任一可达即完成信令，断线自动重连；其中 EMQX（国内公司）
+> 在国内可达性好。若你的网络连不上这些节点，在设置页 textarea 里**一行一个**填入实测可用的
+> 公共 MQTT broker 地址，保存后自动重连（清空保存即恢复内置默认）。
 > 2026-09 实测：公共 wss BitTorrent Tracker 生态仅 webtorrent.dev / openwebtorrent.com 存活，
 > 其余候选（fastcast / gbitt / nanoha / moeking / opentrackr / tamers 等）均已失效；
 > 公共 MQTT broker 冗余多、可达性好，故默认使用 MQTT 信令。

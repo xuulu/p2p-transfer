@@ -1,8 +1,9 @@
 'use client'
 
 import { useState } from 'react'
+import { defaultRelayUrls } from '@trystero-p2p/mqtt'
 import type { Theme } from './transfer-app'
-import { DEFAULT_SIGNAL_URLS, TRACKERS_KEY } from '@/lib/protocol'
+import { TRACKERS_KEY } from '@/lib/protocol'
 import { Icon } from './icons'
 
 const THEME_OPTIONS: { key: Theme; label: string }[] = [
@@ -84,20 +85,22 @@ export function SettingsView({
       <section className="rounded-[28px] bg-surface px-5 py-5 shadow-sm">
         <h2 className="mb-1 text-sm font-medium text-on-surface-variant">信令服务器</h2>
         <p className="mb-3 text-xs leading-relaxed text-on-surface-variant">
-          一行一个地址，清空保存即恢复默认（内置 {DEFAULT_SIGNAL_URLS.length} 个公共节点）。
-          两台设备需使用相同列表才能互通。
+          留空 = 使用 Trystero 内置默认节点（{defaultRelayUrls.length} 个公共 MQTT broker，开箱即用）。
+          自定义时一行一个地址；两台设备需使用相同列表才能互通。
         </p>
         <textarea
           value={trackersText}
           onChange={(e) => setTrackersText(e.target.value)}
-          placeholder={DEFAULT_SIGNAL_URLS.join('\n')}
+          placeholder={defaultRelayUrls.join('\n')}
           rows={6}
           spellCheck={false}
           className="w-full resize-y rounded-2xl border border-outline-soft bg-surface px-3.5 py-2.5 font-mono text-xs leading-relaxed outline-none placeholder:text-on-surface-variant/60 focus:border-primary"
         />
         <div className="mt-2.5 flex items-center justify-between gap-2">
           <p className="text-xs text-on-surface-variant">
-            当前生效：{trackers.length} 个节点
+            {trackers.length > 0
+              ? `当前生效：${trackers.length} 个自定义节点`
+              : `当前生效：Trystero 内置 ${defaultRelayUrls.length} 个默认节点`}
           </p>
           <div className="flex gap-2">
             <button
@@ -143,10 +146,10 @@ export function SettingsView({
       {/* 关于 */}
       <section className="rounded-[28px] bg-surface px-5 py-5 text-xs leading-relaxed text-on-surface-variant shadow-sm">
         <h2 className="mb-2 text-sm font-medium text-on-surface">关于</h2>
-        <p>P2P 快传 · v1.8.0</p>
+        <p>P2P 快传 · v1.9.0</p>
         <p className="mt-1">WebRTC Mesh 直连，数据不经过服务器，需 HTTPS 安全上下文。</p>
         <p className="mt-1">
-          信令：默认公共 MQTT 网络（5 节点并行冗余），设置页可自定义一行一个地址；连接稳定性：心跳保活、自动重连、切回页面/网络恢复自动检查、传输中屏幕常亮。
+          信令：默认使用 Trystero 内置节点（5 个公共 MQTT broker），设置页可自定义一行一个地址覆盖；连接稳定性：心跳保活、自动重连、切回页面/网络恢复自动检查、传输中屏幕常亮。
         </p>
       </section>
     </div>

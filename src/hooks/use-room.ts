@@ -4,14 +4,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DataPayload, MessageAction, joinRoom } from '@trystero-p2p/mqtt'
 import {
   CHUNK_SIZE,
-  DEFAULT_SIGNAL_URLS,
   HEARTBEAT_MS,
   PEER_STALE_MS,
   REJOIN_BASE_MS,
   REJOIN_MAX_MS,
   TRACKERS_KEY,
   TRYSTERO_APP_ID,
-  resolveSignalList,
   shortId,
 } from '@/lib/protocol'
 import type { CancelMsg, ChunkMeta, FileMeta, TextMsg } from '@/lib/protocol'
@@ -84,10 +82,10 @@ export function useRoom(roomId: string) {
   const [notice, setNotice] = useState('')
   /** 信令曾连上、现已全断且正在自动重连 */
   const [reconnecting, setReconnecting] = useState(false)
-  /** 自定义信令列表（设置页 textarea 保存的原始值，一行一个） */
+  /** 自定义信令列表（设置页 textarea 保存的原始值，一行一个；空 = 用 trystero 内置默认） */
   const [customTrackers, setCustomTrackers] = useState<string[]>([])
-  // 运行时信令列表：自定义非空时用自定义，否则默认 5 个公共 broker
-  const [trackers, setTrackers] = useState<string[]>(DEFAULT_SIGNAL_URLS)
+  // 运行时信令列表：仅自定义覆盖时非空，否则留空走 trystero 内置默认节点
+  const [trackers, setTrackers] = useState<string[]>([])
 
   const roomRef = useRef<Room | null>(null)
   const actionsRef = useRef<{
@@ -217,7 +215,7 @@ export function useRoom(roomId: string) {
     }
     setCustomTrackers(custom)
     customTrackersRef.current = custom
-    setTrackers(resolveSignalList(custom))
+    setTrackers(custom)
   }, [])
 
   // =============================================================
@@ -812,8 +810,8 @@ export function useRoom(roomId: string) {
       }
       setCustomTrackers(clean)
       customTrackersRef.current = clean
-      setTrackers(resolveSignalList(clean))
-      showNotice(clean.length > 0 ? '已保存，正在重新连接信令…' : '已恢复默认信令，正在重新连接…')
+      setTrackers(clean)
+      showNotice(clean.length > 0 ? '已保存，正在重新连接信令…' : '已恢复默认（Trystero 内置节点），正在重新连接…')
     },
     [showNotice],
   )

@@ -19,35 +19,22 @@ export const REJOIN_MAX_MS = 30_000
 export const TRYSTERO_APP_ID = 'p2p-transfer-platform-v1'
 
 /**
- * 信令模型：一行一个服务器地址（设置页 textarea，localStorage 持久化）。
+ * 信令模型（v1.9，纯 Trystero 默认 + 可选自定义覆盖）：
  *
- * - 默认内置 trystero mqtt 策略的 5 个公共 broker（多节点并行冗余，任一可达即完成信令）
- * - 自定义列表（一行一个 wss:// 地址）非空时整体生效；清空保存 = 恢复默认
- * - 2026-09 实测：公共 wss BitTorrent Tracker 生态仅 webtorrent.dev / openwebtorrent.com
- *   存活，其余候选均失效；公共 MQTT broker 冗余多、可达性好，故默认使用 MQTT 信令。
+ * - 未自定义时**完全使用 trystero 内置默认节点**（`@trystero-p2p/mqtt` 的
+ *   `defaultRelayUrls`：Mosquitto / EMQX / Shiftr / EMQX 中国区 / HiveMQ，
+ *   多节点并行冗余，任一可达即完成信令）——零配置开箱即用。
+ * - 设置页自定义列表（一行一个 wss:// 地址）非空时整体覆盖生效。
+ * - 2026-09 实测：公共 wss BitTorrent Tracker 生态仅 webtorrent.dev /
+ *   openwebtorrent.com 存活，其余候选均失效；trystero 内置公共 MQTT broker
+ *   冗余多、可达性好，故使用 mqtt 策略的默认节点。
  * - 注意：PeerJS 的信令服务器（0.peerjs.com 等）协议与 trystero 不兼容，无法使用；
  *   GitHub 仓库地址也不是信令服务器。自定义列表请填 trystero 可用的公共 MQTT broker。
  * - 双方设备需使用同一信令列表才能互通（不同列表 = 不同信令网络）。
  */
-export const DEFAULT_SIGNAL_URLS = [
-  'wss://test.mosquitto.org:8081/mqtt',
-  'wss://broker.emqx.io:8084/mqtt',
-  'wss://public:public@public.cloud.shiftr.io',
-  'wss://broker-cn.emqx.io:8084/mqtt',
-  'wss://broker.hivemq.com:8884/mqtt',
-]
 
 /** 自定义信令列表持久化 key（一行一个，\n 分隔） */
 export const TRACKERS_KEY = 'p2p-transfer-trackers'
-
-/**
- * 由「自定义列表」解析出当前生效的信令列表。
- * 自定义非空时用自定义；否则回退默认 5 个公共 broker。
- */
-export function resolveSignalList(custom: string[]): string[] {
-  const clean = custom.map((s) => s.trim()).filter(Boolean)
-  return clean.length > 0 ? clean : DEFAULT_SIGNAL_URLS
-}
 
 export const DEFAULT_ROOM = 'default'
 

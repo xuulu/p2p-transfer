@@ -4,7 +4,7 @@
 
 - **数据零中转**：信令只用于建立连接，之后设备间建立 WebRTC **Mesh** 直连，文件与文本不经过任何服务器
 - **纯静态导出**：`output: 'export'`，部署到任意静态托管；所有路径重写到 `index.html`，客户端从 `window.location.pathname` 解析房间 ID
-- **功能**：在线设备列表 · 拖拽发送文件 · 传输进度/速度 · 文本传输（发送栏输入，列表留痕可复制）· 信令默认 Trystero 内置节点（可自定义一行一个覆盖）· **局域网直连（无服务器，扫码/粘贴邀请码）** · 大文件 64KB 分块 + 逐块背压 · OPFS 流式保存
+- **功能**：在线设备列表 · 拖拽发送文件 · 传输进度/速度 · 文本传输（发送栏输入，列表留痕可复制）· 信令默认 Trystero 内置节点（可自定义一行一个覆盖）· 大文件 64KB 分块 + 逐块背压 · OPFS 流式保存
 
 ## 功能特性
 
@@ -16,7 +16,6 @@
 | 文件传输 | 应用层按 **64KB** 分块，`file-chunk` action 逐块发送并 **`await` 每块的发送 Promise**（背压），对端按写链串行落盘 |
 | 文本传输 | 「发送」页输入文本发送给选中设备，收发双方都在传输列表留下记录，可一键复制（无自动剪贴板同步） |
 | 信令配置 | 默认**直接用 Trystero 内置节点**（零配置）；「设置」页可**一行一个**自定义服务器地址（localStorage 持久化，保存后自动重连）；清空保存恢复内置默认；两台设备需使用相同列表才能互通 |
-| 局域网直连 | **不经过任何服务器**：A 生成邀请（二维码/可复制）→ B 扫码或粘贴生成回复码 → A 粘贴回复码 → RTCPeerConnection + DataChannel 直连（同一 WiFi 下 host 地址直连，STUN 仅辅助跨网打洞）；应用层协议与信令通道完全一致（64KB 分块 + 背压 + OPFS），传输列表/收件箱合并展示 |
 | 连接稳定性 | 心跳保活（ping/pong）检测并剔除失联设备；信令断线按指数退避自动重建房间（2s→30s）；WebRTC 直连建立后不依赖 Tracker，有存活设备时不重建；切回标签页 / 网络恢复 / 移动网络切换 / bfcache 恢复时自动检查重连；传输中请求 Wake Lock 屏幕常亮 |
 | 传输进度 | 发送端按已发送字节、接收端按已收字节实时计算，界面 150ms 节流刷新 + 速度估算 |
 | 大文件落盘 | 接收端边收边写 **OPFS**（源私有文件系统）`FileSystemWritableFileStream`，不占内存；完成后可从收件箱下载/删除 |
@@ -25,17 +24,11 @@
 ## 工作原理
 
 ```
-信令通道（跨网）：
-设备 A ──wss──► 公共 MQTT broker ◄──wss── 设备 B
+设备 A ──wss──► 公共 BitTorrent Tracker ◄──wss── 设备 B
                 （仅交换 SDP/ICE 信令，不传业务数据）
         ▲                                        ▲
         │        WebRTC Mesh（DTLS 加密直连）        │
         └─────────────── A ⇄ B ⇄ C ───────────────┘
-
-局域网直连（无服务器）：
-A 生成邀请码 ──(二维码/复制)──► B 生成回复码 ──(复制)──► A 粘贴
-                → RTCPeerConnection + DataChannel 直连
-                （同一 WiFi 下不经过任何服务器）
 
 文件发送（发送端）：File → slice 64KB → 逐块 await(fileChunk.send) → 进度广播
 文件接收（接收端）：file-meta → 打开 OPFS writable → 逐块 write → close → 收件箱
@@ -48,7 +41,7 @@ A 生成邀请码 ──(二维码/复制)──► B 生成回复码 ──(复
 
 ```
 p2p-transfer/
-├── package.json              # next 16 / react 19 / @trystero-p2p/mqtt / lz-string / qrcode / tailwind v4
+├── package.json              # next 16 / react 19 / @trystero-p2p/mqtt / tailwind v4
 ├── next.config.ts            # output: 'export' 纯静态导出
 ├── tsconfig.json
 ├── postcss.config.mjs        # Tailwind v4 PostCSS 插件
@@ -66,17 +59,15 @@ p2p-transfer/
     │   ├── receive-view.tsx  # 接收页：主卡片、房间信息、信令状态、传输/收件箱
     │   ├── send-view.tsx     # 发送页：设备列表（多选）、文本发送、选文件、拖拽投递
     │   ├── settings-view.tsx # 设置页：房间（复制链接/新房间）、信令服务器（一行一个）、主题、关于
-    │   ├── lan-connect-card.tsx # 局域网直连卡片（邀请二维码/邀请码/回复码/直连状态）
     │   ├── help-dialog.tsx   # 教程与原理弹窗
-    │   ├── peer-list.tsx     # 在线设备卡片网格（信令 + 局域网合并，LAN 徽标）
+    │   ├── peer-list.tsx     # 在线设备卡片网格（接收页醒目区块）
     │   ├── transfer-list.tsx # 传输任务进度（文件）+ 文本记录（可复制）+ OPFS 收件箱
     │   └── icons.tsx         # 内联 Material 图标
     ├── hooks/
     │   └── use-room.ts       # trystero 房间生命周期 + 文件/文本协议 + 信令列表（全部在 useEffect 初始化）
     └── lib/
         ├── protocol.ts       # 协议常量/消息类型/分块大小/默认信令节点与列表解析
-        ├── opfs.ts           # OPFS 流式保存、下载、删除
-        └── lan.ts            # 局域网手动信令（邀请码压缩编解码 + RTCPeerConnection）
+        └── opfs.ts           # OPFS 流式保存、下载、删除
 ```
 
 ## 快速开始
@@ -129,19 +120,6 @@ server {
 }
 ```
 
-## 局域网直连使用
-
-接收页「局域网直连」卡片：
-
-1. **发起方**点「生成邀请」→ 显示二维码 + 可复制的邀请链接
-2. **接收方**扫码打开（或粘贴邀请码）→ 自动生成回复码 → 点「复制回复码」
-3. **发起方**把回复码粘贴到输入框 → 点「连接」→ 双方直连
-
-> 邀请链接形如 `https://你的站点/#lan=…`，二维码内容即该链接；
-> 同一 WiFi 下不依赖任何服务器，面对面扫码即可；跨网时依赖 STUN 打洞，
-> 严格 NAT 下可能失败（此时用上方信令通道）。
-> 一次支持一对一直连，需要多人互传请用信令房间。
-
 ## 通信排查（“两台设备互相看不到/传不了”）
 
 页面顶部状态行实时显示：`信令 N/M · 设备 K 台在线`；设置页「信令服务器」一行一个。
@@ -158,7 +136,7 @@ server {
 | 现象 | 含义 | 处理 |
 | --- | --- | --- |
 | 状态点变红/琥珀 + “信令全部不可达” | 当前信令节点连不上（国内网络常见） | 设置页填写/更换公共 MQTT broker 地址，两台设备保持一致 |
-| 信令正常但两台设备互相看不到 | WebRTC 直连失败（NAT 严格/企业网） | 两台设备处于同一 WiFi 时改用「局域网直连」扫码连接；跨网时为 `joinRoom` 配置 `turnConfig` |
+| 信令正常但两台设备互相看不到 | WebRTC 直连失败（NAT 严格/企业网） | 为 `joinRoom` 配置 `turnConfig`（见 trystero 文档），或让两台设备处于同一局域网 |
 | 设备在线但传输失败 | 个别 NAT 类型直连失败 | 同上，启用 TURN |
 | 提示“与设备 xx 连接失败：…TURN…” | 握手阶段就要求 TURN | 配置 TURN 服务器 |
 

@@ -8,11 +8,9 @@ import { Icon } from './icons'
 export function PeerList({
   selfId,
   peers,
-  lanCount = 0,
 }: {
   selfId: string | null
   peers: Map<string, PeerInfo>
-  lanCount?: number
 }) {
   const items = [...peers.values()]
   const total = items.length + (selfId ? 1 : 0)
@@ -25,11 +23,6 @@ export function PeerList({
           <span className="ml-1.5 rounded-full bg-primary-container px-2 py-0.5 text-xs font-semibold text-on-primary-container">
             {total}
           </span>
-          {lanCount > 0 && (
-            <span className="ml-1.5 rounded-full bg-lan/15 px-2 py-0.5 text-xs font-semibold text-lan">
-              LAN {lanCount}
-            </span>
-          )}
         </h3>
         {items.length > 0 && (
           <span className="flex items-center gap-1 text-xs text-primary">
@@ -44,7 +37,7 @@ export function PeerList({
           <Icon name="device" className="mb-2 h-8 w-8 text-on-surface-variant/60" />
           <p className="text-sm font-medium text-on-surface-variant">等待其他设备加入</p>
           <p className="mt-1 text-xs text-on-surface-variant">
-            让对方打开同一个房间链接，或使用「局域网直连」扫码加入
+            让对方打开同一个房间链接，上线后这里会立即显示
           </p>
         </div>
       ) : (
@@ -71,7 +64,6 @@ export function PeerList({
           {items.map((p) => {
             const label = p.name || shortId(p.id, 8)
             const initial = (label.trim().charAt(0) || '?').toUpperCase()
-            const isLan = p.id.startsWith('lan-')
             return (
               <li
                 key={p.id}
@@ -81,11 +73,9 @@ export function PeerList({
                 <span
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white"
                   style={{
-                    background: isLan
-                      ? 'linear-gradient(135deg, #00796b, #26a69a)'
-                      : p.name
-                        ? 'linear-gradient(135deg, #6750a4, #9a82db)'
-                        : 'linear-gradient(135deg, #49454f, #79747e)',
+                    background: p.name
+                      ? 'linear-gradient(135deg, #6750a4, #9a82db)'
+                      : 'linear-gradient(135deg, #49454f, #79747e)',
                   }}
                 >
                   {initial}
@@ -93,7 +83,6 @@ export function PeerList({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">{label}</span>
                   <span className="block truncate font-mono text-[11px] text-on-surface-variant">
-                    {isLan ? '局域网 · ' : ''}
                     {p.id.slice(0, 10)}…
                   </span>
                 </span>
@@ -108,4 +97,3 @@ export function PeerList({
     </div>
   )
 }
-

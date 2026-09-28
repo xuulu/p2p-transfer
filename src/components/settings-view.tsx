@@ -146,10 +146,10 @@ export function SettingsView({
       {/* 关于 */}
       <section className="rounded-[28px] bg-surface px-5 py-5 text-xs leading-relaxed text-on-surface-variant shadow-sm">
         <h2 className="mb-2 text-sm font-medium text-on-surface">关于</h2>
-        <p>P2P 快传 · v2.0.0</p>
+        <p>P2P 快传 · v2.1.0</p>
         <p className="mt-1">WebRTC Mesh 直连，数据不经过服务器，需 HTTPS 安全上下文。</p>
         <p className="mt-1">
-          信令：默认使用 Trystero 内置节点（5 个公共 MQTT broker），可自定义一行一个地址；另支持「局域网直连」：扫码/粘贴邀请码、无服务器直连（同一 WiFi）；连接稳定性：心跳保活、自动重连、切回页面/网络恢复自动检查、传输中屏幕常亮。
+          信令：默认使用 Trystero 内置节点（5 个公共 MQTT broker），设置页可自定义一行一个地址覆盖；连接稳定性：心跳保活、自动重连、切回页面/网络恢复自动检查、传输中屏幕常亮。
         </p>
       </section>
     </div>

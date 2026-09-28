@@ -1,10 +1,7 @@
 'use client'
 
-import { useMemo } from 'react'
 import { useRoom } from '@/hooks/use-room'
-import type { LanRoom } from '@/hooks/use-lan-room'
 import { Icon } from './icons'
-import { LanConnectCard } from './lan-connect-card'
 import { PeerList } from './peer-list'
 import { TransferList } from './transfer-list'
 
@@ -13,25 +10,15 @@ type Room = ReturnType<typeof useRoom>
 export function ReceiveView({
   roomId,
   room,
-  lan,
-  mergedPeers,
   relayOpen,
   relayTotal,
-  baseUrl,
 }: {
   roomId: string
   room: Room
-  lan: LanRoom
-  mergedPeers: Map<string, { id: string; name?: string }>
   relayOpen: number
   relayTotal: number
-  baseUrl: string
 }) {
   const joining = room.status === 'joining' || (room.status === 'joined' && relayTotal === 0)
-  const lanPeerCount = lan.peers.size
-  const allTransfers = useMemo(() => [...room.transfers, ...lan.transfers], [room.transfers, lan.transfers])
-  const allInbox = useMemo(() => [...room.inboxFiles, ...lan.inboxFiles], [room.inboxFiles, lan.inboxFiles])
-  const totalPeers = mergedPeers.size
 
   return (
     <div className="flex flex-col gap-4">
@@ -45,22 +32,19 @@ export function ReceiveView({
         </div>
         <h2 className="text-lg font-semibold">接收文件，与其他人共享到您的设备</h2>
         <p className="mt-1 text-sm text-on-surface-variant">
-          {joining && totalPeers === 0 && lanPeerCount === 0
+          {joining
             ? '正在连接信令，请稍候…'
-            : totalPeers > 0 || lanPeerCount > 0
-              ? `${totalPeers + lanPeerCount} 台设备在线，发送方选择您即可投递`
-              : '等待其他设备通过房间链接或局域网邀请加入…'}
+            : room.peers.size > 0
+              ? `${room.peers.size} 台设备在线，发送方选择您即可投递`
+              : '等待其他设备通过房间链接加入…'}
         </p>
       </section>
 
-      {/* 局域网直连（无服务器） */}
-      <LanConnectCard lan={lan} baseUrl={baseUrl} />
-
-      {/* 房间卡片（信令连接） */}
+      {/* 房间卡片 */}
       <section className="rounded-[28px] bg-surface px-5 py-4 shadow-sm">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-xs text-on-surface-variant">当前房间（信令）</p>
+            <p className="text-xs text-on-surface-variant">当前房间</p>
             <p className="truncate font-mono text-sm font-medium text-primary">{roomId}</p>
           </div>
           <span
@@ -105,14 +89,14 @@ export function ReceiveView({
 
         {room.reconnecting && (
           <p className="mt-3 rounded-2xl bg-warning-soft px-3 py-2 text-xs leading-relaxed text-warning">
-            信令已断开，正在自动重连…（已建立的设备直连不受影响；也可用上方「局域网直连」）
+            信令已断开，正在自动重连…（已建立的设备直连不受影响）
           </p>
         )}
 
         {room.status === 'joined' && relayTotal > 0 && relayOpen === 0 && (
           <p className="mt-3 rounded-2xl bg-error/10 px-3 py-2 text-xs leading-relaxed text-error">
-            信令全部不可达，设备间无法互相发现。可到「设置」页配置信令服务器，
-            或使用上方「局域网直连」扫码连接。
+            Tracker 信令全部不可达，设备间无法互相发现。可到「设置」页配置信令服务器
+            （国内网络建议 Nginx 反代，见 README）。
           </p>
         )}
         {room.status === 'error' && (
@@ -122,36 +106,24 @@ export function ReceiveView({
         )}
       </section>
 
-      {/* 在线设备（信令 + 局域网合并） */}
+      {/* 在线设备（醒目区块） */}
       <section className="rounded-[28px] bg-surface px-5 py-5 shadow-sm">
-        <PeerList selfId={room.selfId} peers={mergedPeers} lanCount={lanPeerCount} />
+        <PeerList selfId={room.selfId} peers={room.peers} />
       </section>
 
       {/* 传输（文件与文本记录，文本可复制） */}
       <TransferList
-        transfers={allTransfers}
-        inboxFiles={allInbox}
-        onCancel={(fileId) => {
-          const t = allTransfers.find((x) => x.fileId === fileId)
-          if (t && t.peerId.startsWith('lan-')) lan.cancelFile(fileId)
-          else room.cancelFile(fileId)
-        }}
-        onDownload={(name) => {
-          const found = room.inboxFiles.some((f) => f.name === name)
-          if (found) void room.downloadInboxFile(name)
-          else void lan.downloadInboxFile(name)
-        }}
-        onDelete={(name) => {
-          const found = room.inboxFiles.some((f) => f.name === name)
-          if (found) void room.deleteInboxFile(name)
-          else void lan.deleteInboxFile(name)
-        }}
+        transfers={room.transfers}
+        inboxFiles={room.inboxFiles}
+        onCancel={room.cancelFile}
+        onDownload={room.downloadInboxFile}
+        onDelete={room.deleteInboxFile}
       />
 
       {/* 通知 */}
-      {(room.notice || lan.notice) && (
+      {room.notice && (
         <p className="rounded-2xl bg-scrim px-4 py-2.5 text-center text-sm text-white">
-          {lan.notice || room.notice}
+          {room.notice}
         </p>
       )}
     </div>

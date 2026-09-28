@@ -97,8 +97,15 @@ export function SendView({
                     <Icon name="device" className="h-6 w-6" />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">
-                      {p.name || shortId(p.id, 8)}
+                    <span className="flex items-center gap-1.5">
+                      <span className="block truncate text-sm font-medium">
+                        {p.name || shortId(p.id, 8)}
+                      </span>
+                      {p.id.startsWith('lan-') && (
+                        <span className="shrink-0 rounded-full bg-lan/15 px-1.5 py-0.5 text-[10px] font-medium text-lan">
+                          局域网
+                        </span>
+                      )}
                     </span>
                     <span className="block truncate font-mono text-xs text-on-surface-variant">
                       {p.id.slice(0, 12)}…

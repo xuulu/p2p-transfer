@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import type { PeerInfo } from '@/hooks/use-room'
+import type { PeerInfo } from '@/lib/protocol'
 import { shortId } from '@/lib/protocol'
 import { Icon } from './icons'
 
@@ -74,7 +74,7 @@ export function SendView({
           </div>
           <p className="text-sm font-medium">等待设备上线</p>
           <p className="mt-1 text-xs text-on-surface-variant">
-            让对方打开同一个房间链接，上线后即可发送
+            先在「接收」页生成邀请，对方扫码或粘贴邀请码连接后即可发送
           </p>
         </section>
       ) : (

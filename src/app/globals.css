@@ -44,6 +44,14 @@
   --m3-scrim: rgba(0, 0, 0, 0.4);
 }
 
+/* 局域网直连指示色（青绿，区别于紫色主色） */
+:root {
+  --lan: #00a97f;
+}
+.dark {
+  --lan: #35d8a6;
+}
+
 @theme inline {
   --color-bg: var(--m3-bg);
   --color-surface: var(--m3-surface);
@@ -61,6 +69,7 @@
   --color-warning: var(--m3-warning);
   --color-warning-soft: var(--m3-warning-soft);
   --color-scrim: var(--m3-scrim);
+  --color-lan: var(--lan);
 }
 
 /* 细滚动条 */

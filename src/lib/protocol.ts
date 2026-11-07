@@ -1,47 +1,20 @@
 // =============================================================
-// 协议常量与工具函数
-// 纯客户端模块：不引用任何浏览器 API（可在 SSR 预渲染时安全求值）
+// 协议常量与类型（纯客户端模块）
+// v3.0：局域网直连版，已移除全部公网信令 / Trystero / WebRTC Mesh 相关定义。
+// 本模块不引用任何浏览器 API（可在 SSR 预渲染时安全求值）。
 // =============================================================
 
 /** 文件分块大小：64KB */
 export const CHUNK_SIZE = 64 * 1024
 
-// ---- 连接稳定性参数 ----
-/** 心跳间隔：前台 15s 一次；后台标签页被浏览器节流（约 1 次/分钟）时仍能工作，判断只看真实时间差 */
+/** 心跳间隔：前台 15s 一次；后台标签页被浏览器节流时仍能工作，判断只看真实时间差 */
 export const HEARTBEAT_MS = 15_000
 /** 对端超过该时长无任何消息（含心跳回应）视为失联，从在线列表剔除（前台执行） */
 export const PEER_STALE_MS = 45_000
-/** 信令全断后的自动重连退避：指数增长，从 2s 到 30s 封顶 */
-export const REJOIN_BASE_MS = 2_000
-export const REJOIN_MAX_MS = 30_000
 
-/** trystero 应用命名空间：信令 swarm 按 appId + roomId 隔离，不同应用互不可见 */
-export const TRYSTERO_APP_ID = 'p2p-transfer-platform-v1'
+// ---- 局域网 DataChannel 消息定义 ----
 
-/**
- * 信令模型（v1.9，纯 Trystero 默认 + 可选自定义覆盖）：
- *
- * - 未自定义时**完全使用 trystero 内置默认节点**（`@trystero-p2p/mqtt` 的
- *   `defaultRelayUrls`：Mosquitto / EMQX / Shiftr / EMQX 中国区 / HiveMQ，
- *   多节点并行冗余，任一可达即完成信令）——零配置开箱即用。
- * - 设置页自定义列表（一行一个 wss:// 地址）非空时整体覆盖生效。
- * - 2026-09 实测：公共 wss BitTorrent Tracker 生态仅 webtorrent.dev /
- *   openwebtorrent.com 存活，其余候选均失效；trystero 内置公共 MQTT broker
- *   冗余多、可达性好，故使用 mqtt 策略的默认节点。
- * - 注意：PeerJS 的信令服务器（0.peerjs.com 等）协议与 trystero 不兼容，无法使用；
- *   GitHub 仓库地址也不是信令服务器。自定义列表请填 trystero 可用的公共 MQTT broker。
- * - 双方设备需使用同一信令列表才能互通（不同列表 = 不同信令网络）。
- */
-
-/** 自定义信令列表持久化 key（一行一个，\n 分隔） */
-export const TRACKERS_KEY = 'p2p-transfer-trackers'
-
-export const DEFAULT_ROOM = 'default'
-
-// ---- 房间内消息（trystero action）定义 ----
-// 注意：需满足 trystero 的 DataPayload（JsonValue）约束，故使用类型别名而非 interface
-
-/** action: 'file-meta' —— 文件元信息，先于分块发送 */
+/** 'file-meta' —— 文件元信息，先于分块发送 */
 export type FileMeta = {
   fileId: string
   name: string
@@ -50,44 +23,53 @@ export type FileMeta = {
   chunkCount: number
 }
 
-/** action: 'file-chunk' —— payload 为 64KB 二进制，序号放在元信息里 */
+/** 文件块帧的元信息（二进制帧头里也带同样的字段） */
 export type ChunkMeta = {
   fileId: string
   seq: number
   chunkCount: number
 }
 
-/** action: 'text' —— 文本消息传输（发送栏手动发送，非自动剪贴板同步） */
+/** 'text' —— 文本消息（发送栏手动发送，非自动剪贴板同步） */
 export type TextMsg = {
   text: string
   ts: number
 }
 
-/** action: 'file-cancel' —— 任一端取消传输 */
+/** 'file-cancel' —— 任一端取消传输 */
 export type CancelMsg = {
   fileId: string
 }
 
-// action: 'ping' / 'pong' —— 心跳保活，payload 为发送方时间戳（number）。
-// 对端任何消息都会刷新其存活时间，超过 PEER_STALE_MS 无响应即视为失联。
+// ---- UI 共用类型 ----
+
+export interface PeerInfo {
+  id: string
+  name?: string
+}
+
+export type TransferStatus = 'active' | 'done' | 'error' | 'cancelled'
+export type TransferKind = 'file' | 'text'
+
+export interface Transfer {
+  fileId: string
+  kind: TransferKind
+  name: string
+  size: number
+  mime: string
+  direction: 'in' | 'out'
+  peerId: string
+  bytes: number
+  status: TransferStatus
+  startedAt: number
+  speed: number
+  error?: string
+  readyToDownload?: boolean
+  /** 仅文本传输：消息内容 */
+  text?: string
+}
 
 // ---- 工具函数 ----
-
-/** 生成随机房间 ID（8 位十六进制） */
-export function randomRoomId(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(4))
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
-}
-
-/**
- * 从 window.location.pathname 解析房间 ID：
- * 静态托管把所有路径重写到 index.html 后，路径本身即房间 ID。
- * 取最后一个非空路径段，兼容根路径部署与子路径部署（GitHub Pages /repo/...）。
- */
-export function roomIdFromPath(pathname: string): string {
-  const segments = pathname.split('/').filter(Boolean)
-  return segments[segments.length - 1] ?? ''
-}
 
 /** 设备 ID 的短展示形式 */
 export function shortId(id: string, len = 10): string {

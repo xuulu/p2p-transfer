@@ -1,8 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRoom } from '@/hooks/use-room'
-import { DEFAULT_ROOM, randomRoomId, roomIdFromPath } from '@/lib/protocol'
+import { useLanRoom } from '@/hooks/use-lan-room'
 import { HelpDialog } from './help-dialog'
 import { Icon } from './icons'
 import { ReceiveView } from './receive-view'
@@ -12,12 +11,16 @@ import { SettingsView } from './settings-view'
 type Tab = 'receive' | 'send' | 'settings'
 export type Theme = 'system' | 'light' | 'dark'
 
-const ROOM_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/
 const THEME_KEY = 'p2p-transfer-theme'
 
+/**
+ * 局域网快传（v3.0）
+ * - 无服务器、无公网信令：局域网内两台设备通过邀请码/二维码人工交换 WebRTC 信令后直连
+ * - 数据只走局域网 DataChannel，不经过任何服务器
+ * - UI 沿用 LocalSend 风格：接收 / 发送 / 设置 三个 Tab
+ */
 export function TransferApp() {
-  const [roomId, setRoomId] = useState(DEFAULT_ROOM)
-  const room = useRoom(roomId)
+  const lan = useLanRoom()
   const [tab, setTab] = useState<Tab>(() => {
     if (typeof window !== 'undefined') {
       const t = new URLSearchParams(window.location.search).get('tab')
@@ -27,21 +30,19 @@ export function TransferApp() {
   })
   const [theme, setTheme] = useState<Theme>('system')
   const [helpOpen, setHelpOpen] = useState(false)
-  const [toast, setToast] = useState('')
 
-  // 静态托管把所有路径重写到 index.html（GitHub Pages 走 404.html 暂存），这里恢复房间 ID
+  // 扫码打开 #lan=邀请码 → 自动解析并生成回复码（接收方）
   useEffect(() => {
-    let id = roomIdFromPath(window.location.pathname)
-    const gh = sessionStorage.getItem('gh-pages-redirect')
-    sessionStorage.removeItem('gh-pages-redirect')
-    if (gh && gh !== '/' && gh !== '') id = gh
-    if (!ROOM_PATTERN.test(id)) id = DEFAULT_ROOM
-    setRoomId(id)
-    try {
-      window.history.replaceState(null, '', id)
-    } catch {
-      /* ignore */
+    const h = window.location.hash
+    if (h.startsWith('#lan=')) {
+      void lan.injectExternal(h.slice(5))
+      try {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search)
+      } catch {
+        /* ignore */
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // 主题：读取偏好并应用 .dark 类
@@ -63,54 +64,35 @@ export function TransferApp() {
     }
   }, [theme])
 
-  const flashToast = (msg: string) => {
-    setToast(msg)
-    setTimeout(() => setToast(''), 2500)
-  }
+  const baseUrl = typeof window !== 'undefined' ? window.location.href.split(/[?#]/)[0] : ''
 
-  const copyRoomLink = async () => {
-    try {
-      await navigator.clipboard.writeText(window.location.href)
-      flashToast('房间链接已复制')
-    } catch {
-      flashToast('复制失败，请手动复制地址栏')
-    }
-  }
-
-  const createNewRoom = () => {
-    const id = randomRoomId()
-    const href = window.location.href.split(/[?#]/)[0].replace(/\/+$/, '')
-    const base = href.slice(0, href.lastIndexOf('/') + 1)
-    window.location.href = base + id
-  }
-
-  const relayOpen = room.relays.filter((r) => r.state === 'open').length
-  const relayTotal = room.relays.length
+  const dotClass = lan.errorMsg
+    ? 'bg-error'
+    : lan.phase === 'connected'
+      ? 'bg-lan'
+      : lan.phase === 'idle'
+        ? 'bg-outline'
+        : 'bg-warning'
+  const dotTitle = lan.errorMsg
+    ? '连接出错'
+    : lan.phase === 'connected'
+      ? '局域网直连已建立'
+      : lan.phase === 'idle'
+        ? '等待生成邀请'
+        : '正在等待对方完成连接'
 
   return (
     <div className="mx-auto flex h-dvh w-full max-w-md flex-col bg-bg text-on-surface">
       {/* AppBar */}
       <header className="flex items-center justify-between px-4 pb-1 pt-4">
-        <h1 className="text-lg font-semibold tracking-tight">P2P 快传</h1>
+        <h1 className="text-lg font-semibold tracking-tight">局域网快传</h1>
         <div className="flex items-center gap-1">
-          {room.peers.size > 0 && (
+          {lan.peers.size > 0 && (
             <span className="mr-1 rounded-full bg-primary-container px-2.5 py-1 text-xs font-medium text-on-primary-container">
-              设备 {room.peers.size}
+              设备 {lan.peers.size}
             </span>
           )}
-          <span
-            title={room.reconnecting ? '信令重连中' : '信令连接状态'}
-            className={
-              'h-2.5 w-2.5 rounded-full ' +
-              (room.status === 'error'
-                ? 'bg-error'
-                : room.reconnecting
-                  ? 'bg-warning'
-                  : room.status === 'joined' && relayOpen > 0
-                    ? 'bg-primary'
-                    : 'bg-outline')
-            }
-          />
+          <span title={dotTitle} className={'h-2.5 w-2.5 rounded-full ' + dotClass} />
           <button
             onClick={() => setHelpOpen(true)}
             title="教程与原理"
@@ -123,27 +105,17 @@ export function TransferApp() {
 
       {/* 内容区 */}
       <main className="flex-1 overflow-y-auto px-4 pb-4">
-        {tab === 'receive' && (
-          <ReceiveView roomId={roomId} room={room} relayOpen={relayOpen} relayTotal={relayTotal} />
-        )}
+        {tab === 'receive' && <ReceiveView lan={lan} baseUrl={baseUrl} />}
         {tab === 'send' && (
           <SendView
-            peers={room.peers}
-            selfId={room.selfId}
-            onSendFiles={room.sendFiles}
-            onSendText={room.sendText}
+            peers={lan.peers}
+            selfId={lan.selfId}
+            onSendFiles={lan.sendFiles}
+            onSendText={lan.sendText}
           />
         )}
         {tab === 'settings' && (
-          <SettingsView
-            roomId={roomId}
-            onCopyLink={() => void copyRoomLink()}
-            onCreateRoom={createNewRoom}
-            trackers={room.trackers}
-            onSaveTrackers={room.saveTrackers}
-            theme={theme}
-            onThemeChange={setTheme}
-          />
+          <SettingsView lan={lan} theme={theme} onThemeChange={setTheme} />
         )}
       </main>
 
@@ -182,13 +154,6 @@ export function TransferApp() {
 
       {/* 教程弹窗 */}
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
-
-      {/* Toast */}
-      {toast && (
-        <div className="fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-full bg-scrim px-4 py-2 text-sm text-white">
-          {toast}
-        </div>
-      )}
     </div>
   )
 }

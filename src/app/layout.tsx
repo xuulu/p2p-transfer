@@ -2,9 +2,9 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'P2P 快传 · 无服务器跨设备文件与文本传输',
+  title: '局域网快传 · 同一 WiFi 文件与文本传输',
   description:
-    '基于 WebRTC Mesh 与公共 BitTorrent Tracker 的无服务器 P2P 文件与文本传输平台。数据不经服务器，设备直连。',
+    '无服务器、无公网信令的局域网文件传输：邀请码/二维码建立 WebRTC 直连，文件与文本只在同一局域网内传输。',
 }
 
 export const viewport: Viewport = {

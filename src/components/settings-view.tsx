@@ -1,10 +1,8 @@
 'use client'
 
-import { useState } from 'react'
-import { defaultRelayUrls } from '@trystero-p2p/mqtt'
-import type { Theme } from './transfer-app'
-import { TRACKERS_KEY } from '@/lib/protocol'
+import type { LanRoom } from '@/hooks/use-lan-room'
 import { Icon } from './icons'
+import type { Theme } from './transfer-app'
 
 const THEME_OPTIONS: { key: Theme; label: string }[] = [
   { key: 'system', label: '跟随系统' },
@@ -13,112 +11,37 @@ const THEME_OPTIONS: { key: Theme; label: string }[] = [
 ]
 
 export function SettingsView({
-  roomId,
-  onCopyLink,
-  onCreateRoom,
-  trackers,
-  onSaveTrackers,
+  lan,
   theme,
   onThemeChange,
 }: {
-  roomId: string
-  onCopyLink: () => void
-  onCreateRoom: () => void
-  trackers: string[]
-  onSaveTrackers: (list: string[]) => void
+  lan: LanRoom
   theme: Theme
   onThemeChange: (t: Theme) => void
 }) {
-  const [trackersText, setTrackersText] = useState(() => {
-    try {
-      return localStorage.getItem(TRACKERS_KEY) ?? ''
-    } catch {
-      return ''
-    }
-  })
-  const [saved, setSaved] = useState(false)
-
-  const saveTrackers = () => {
-    onSaveTrackers(
-      trackersText
-        .split('\n')
-        .map((s) => s.trim())
-        .filter(Boolean),
-    )
-    setSaved(true)
-    setTimeout(() => setSaved(false), 3000)
-  }
-
-  const resetTrackers = () => {
-    setTrackersText('')
-    onSaveTrackers([])
-    setSaved(true)
-    setTimeout(() => setSaved(false), 3000)
-  }
-
   return (
     <div className="flex flex-col gap-4">
-      {/* 房间 */}
+      {/* 局域网传输说明 */}
       <section className="rounded-[28px] bg-surface px-5 py-5 shadow-sm">
-        <h2 className="mb-1 text-sm font-medium text-on-surface-variant">房间</h2>
-        <p className="mb-3 text-xs text-on-surface-variant">房间 ID 即链接路径，所有设备需进入同一房间</p>
-        <p className="mb-3 truncate font-mono text-sm font-medium text-primary">{roomId}</p>
-        <div className="flex gap-2">
+        <h2 className="mb-1 text-sm font-medium text-on-surface-variant">局域网传输</h2>
+        <p className="mb-3 text-xs leading-relaxed text-on-surface-variant">
+          无服务器、无公网信令：两台设备在同一 WiFi / 局域网内通过邀请码交换连接信息后直连，
+          文件与文本只走局域网，不经过任何服务器。
+        </p>
+        <ol className="mb-4 list-decimal space-y-1.5 pl-5 text-xs leading-relaxed text-on-surface-variant">
+          <li>接收方在「接收」页点「生成邀请」。</li>
+          <li>发送方扫码或粘贴邀请码，生成回复码并发回。</li>
+          <li>接收方粘贴回复码，即可建立直连。</li>
+        </ol>
+        {lan.phase !== 'idle' && (
           <button
-            onClick={onCopyLink}
-            className="flex h-11 flex-1 items-center justify-center gap-1.5 rounded-full bg-primary-container text-sm font-medium text-on-primary-container hover:opacity-90"
-          >
-            <Icon name="link" className="h-4 w-4" />
-            复制链接
-          </button>
-          <button
-            onClick={onCreateRoom}
-            className="flex h-11 flex-1 items-center justify-center gap-1.5 rounded-full bg-surface2 text-sm font-medium text-on-surface-variant hover:opacity-90"
+            onClick={lan.resetLan}
+            className="flex h-11 w-full items-center justify-center gap-1.5 rounded-full bg-surface2 text-sm font-medium text-on-surface-variant hover:opacity-90"
           >
             <Icon name="refresh" className="h-4 w-4" />
-            新房间
+            断开并重新连接
           </button>
-        </div>
-      </section>
-
-      {/* 信令服务器：一行一个 */}
-      <section className="rounded-[28px] bg-surface px-5 py-5 shadow-sm">
-        <h2 className="mb-1 text-sm font-medium text-on-surface-variant">信令服务器</h2>
-        <p className="mb-3 text-xs leading-relaxed text-on-surface-variant">
-          留空 = 使用 Trystero 内置默认节点（{defaultRelayUrls.length} 个公共 MQTT broker，开箱即用）。
-          自定义时一行一个地址；两台设备需使用相同列表才能互通。
-        </p>
-        <textarea
-          value={trackersText}
-          onChange={(e) => setTrackersText(e.target.value)}
-          placeholder={defaultRelayUrls.join('\n')}
-          rows={6}
-          spellCheck={false}
-          className="w-full resize-y rounded-2xl border border-outline-soft bg-surface px-3.5 py-2.5 font-mono text-xs leading-relaxed outline-none placeholder:text-on-surface-variant/60 focus:border-primary"
-        />
-        <div className="mt-2.5 flex items-center justify-between gap-2">
-          <p className="text-xs text-on-surface-variant">
-            {trackers.length > 0
-              ? `当前生效：${trackers.length} 个自定义节点`
-              : `当前生效：Trystero 内置 ${defaultRelayUrls.length} 个默认节点`}
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={resetTrackers}
-              className="flex h-10 items-center gap-1.5 rounded-full bg-surface2 px-4 text-sm font-medium text-on-surface-variant hover:opacity-90"
-            >
-              <Icon name="refresh" className="h-4 w-4" />
-              恢复默认
-            </button>
-            <button
-              onClick={saveTrackers}
-              className="flex h-10 items-center gap-1.5 rounded-full bg-primary px-4 text-sm font-semibold text-on-primary"
-            >
-              <Icon name="check" className="h-4 w-4" />
-              {saved ? '已保存' : '保存并重连'}
-            </button>
-          </div>
-        </div>
+        )}
       </section>
 
       {/* 主题 */}
@@ -146,10 +69,11 @@ export function SettingsView({
       {/* 关于 */}
       <section className="rounded-[28px] bg-surface px-5 py-5 text-xs leading-relaxed text-on-surface-variant shadow-sm">
         <h2 className="mb-2 text-sm font-medium text-on-surface">关于</h2>
-        <p>P2P 快传 · v2.1.0</p>
-        <p className="mt-1">WebRTC Mesh 直连，数据不经过服务器，需 HTTPS 安全上下文。</p>
+        <p>局域网快传 · v3.0.0</p>
+        <p className="mt-1">WebRTC 局域网直连（host 候选地址），无服务器、无公网信令，需 HTTPS 安全上下文。</p>
         <p className="mt-1">
-          信令：默认使用 Trystero 内置节点（5 个公共 MQTT broker），设置页可自定义一行一个地址覆盖；连接稳定性：心跳保活、自动重连、切回页面/网络恢复自动检查、传输中屏幕常亮。
+          传输稳定性：64KB 分块 + 逐块背压、心跳保活（15s）、失联剪枝（45s）、传输中屏幕常亮；
+          文本记录可复制，文件流式写入浏览器 OPFS 收件箱。
         </p>
       </section>
     </div>

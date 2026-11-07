@@ -1,24 +1,18 @@
 'use client'
 
-import { useRoom } from '@/hooks/use-room'
+import type { LanRoom } from '@/hooks/use-lan-room'
 import { Icon } from './icons'
+import { LanConnectCard } from './lan-connect-card'
 import { PeerList } from './peer-list'
 import { TransferList } from './transfer-list'
 
-type Room = ReturnType<typeof useRoom>
-
-export function ReceiveView({
-  roomId,
-  room,
-  relayOpen,
-  relayTotal,
-}: {
-  roomId: string
-  room: Room
-  relayOpen: number
-  relayTotal: number
-}) {
-  const joining = room.status === 'joining' || (room.status === 'joined' && relayTotal === 0)
+/**
+ * 接收页（局域网版）：
+ * - 接收主卡片 + 局域网连接卡片（邀请码/二维码）
+ * - 在线设备、传输记录、OPFS 收件箱
+ */
+export function ReceiveView({ lan, baseUrl }: { lan: LanRoom; baseUrl: string }) {
+  const connected = lan.phase === 'connected'
 
   return (
     <div className="flex flex-col gap-4">
@@ -32,98 +26,35 @@ export function ReceiveView({
         </div>
         <h2 className="text-lg font-semibold">接收文件，与其他人共享到您的设备</h2>
         <p className="mt-1 text-sm text-on-surface-variant">
-          {joining
-            ? '正在连接信令，请稍候…'
-            : room.peers.size > 0
-              ? `${room.peers.size} 台设备在线，发送方选择您即可投递`
-              : '等待其他设备通过房间链接加入…'}
+          {connected
+            ? lan.peers.size > 0
+              ? `${lan.peers.size} 台设备已连接，发送方选择您即可投递`
+              : '已连接，等待对方上线…'
+            : '局域网直连，无需服务器：用邀请码连接另一台设备'}
         </p>
       </section>
 
-      {/* 房间卡片 */}
-      <section className="rounded-[28px] bg-surface px-5 py-4 shadow-sm">
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-xs text-on-surface-variant">当前房间</p>
-            <p className="truncate font-mono text-sm font-medium text-primary">{roomId}</p>
-          </div>
-          <span
-            className={
-              'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs ' +
-              (room.status === 'error'
-                ? 'bg-error/10 text-error'
-                : joining
-                  ? 'bg-outline-soft text-on-surface-variant'
-                  : room.reconnecting
-                    ? 'bg-warning-soft text-warning'
-                    : relayOpen > 0
-                      ? 'bg-primary-container text-on-primary-container'
-                      : 'bg-error/10 text-error')
-            }
-          >
-            <span
-              className={
-                'h-1.5 w-1.5 rounded-full ' +
-                (room.status === 'error'
-                  ? 'bg-error'
-                  : joining
-                    ? 'bg-outline'
-                    : room.reconnecting
-                      ? 'bg-warning'
-                      : relayOpen > 0
-                        ? 'bg-primary'
-                        : 'bg-error')
-              }
-            />
-            {room.status === 'error'
-              ? '连接失败'
-              : joining
-                ? '信令连接中'
-                : room.reconnecting
-                  ? '重连中…'
-                  : relayOpen > 0
-                    ? `已连接 · 信令 ${relayOpen}/${relayTotal}`
-                    : '信令不可达'}
-          </span>
-        </div>
+      {/* 局域网连接（邀请码 / 二维码） */}
+      <LanConnectCard lan={lan} baseUrl={baseUrl} />
 
-        {room.reconnecting && (
-          <p className="mt-3 rounded-2xl bg-warning-soft px-3 py-2 text-xs leading-relaxed text-warning">
-            信令已断开，正在自动重连…（已建立的设备直连不受影响）
-          </p>
-        )}
-
-        {room.status === 'joined' && relayTotal > 0 && relayOpen === 0 && (
-          <p className="mt-3 rounded-2xl bg-error/10 px-3 py-2 text-xs leading-relaxed text-error">
-            Tracker 信令全部不可达，设备间无法互相发现。可到「设置」页配置信令服务器
-            （国内网络建议 Nginx 反代，见 README）。
-          </p>
-        )}
-        {room.status === 'error' && (
-          <p className="mt-3 rounded-2xl bg-error/10 px-3 py-2 text-xs leading-relaxed text-error">
-            {room.errorMsg || '未知错误'}
-          </p>
-        )}
-      </section>
-
-      {/* 在线设备（醒目区块） */}
+      {/* 在线设备 */}
       <section className="rounded-[28px] bg-surface px-5 py-5 shadow-sm">
-        <PeerList selfId={room.selfId} peers={room.peers} />
+        <PeerList selfId={lan.selfId} peers={lan.peers} />
       </section>
 
       {/* 传输（文件与文本记录，文本可复制） */}
       <TransferList
-        transfers={room.transfers}
-        inboxFiles={room.inboxFiles}
-        onCancel={room.cancelFile}
-        onDownload={room.downloadInboxFile}
-        onDelete={room.deleteInboxFile}
+        transfers={lan.transfers}
+        inboxFiles={lan.inboxFiles}
+        onCancel={lan.cancelFile}
+        onDownload={lan.downloadInboxFile}
+        onDelete={lan.deleteInboxFile}
       />
 
       {/* 通知 */}
-      {room.notice && (
+      {lan.notice && (
         <p className="rounded-2xl bg-scrim px-4 py-2.5 text-center text-sm text-white">
-          {room.notice}
+          {lan.notice}
         </p>
       )}
     </div>

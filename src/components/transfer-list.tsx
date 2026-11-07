@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { formatBytes, formatPercent, formatSpeed, shortId } from '@/lib/protocol'
-import type { Transfer } from '@/hooks/use-room'
+import type { Transfer } from '@/lib/protocol'
 import type { OpfsFileInfo } from '@/lib/opfs'
 import { Icon } from './icons'
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { shortId } from '@/lib/protocol'
-import type { PeerInfo } from '@/hooks/use-room'
+import type { PeerInfo } from '@/lib/protocol'
 import { Icon } from './icons'
 
 /** 在线设备：卡片网格（接收页独立区块，醒目展示） */
@@ -37,7 +37,7 @@ export function PeerList({
           <Icon name="device" className="mb-2 h-8 w-8 text-on-surface-variant/60" />
           <p className="text-sm font-medium text-on-surface-variant">等待其他设备加入</p>
           <p className="mt-1 text-xs text-on-surface-variant">
-            让对方打开同一个房间链接，上线后这里会立即显示
+            让另一台设备扫码或粘贴邀请码，连上后这里会立即显示
           </p>
         </div>
       ) : (
